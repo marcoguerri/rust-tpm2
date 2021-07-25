@@ -1,6 +1,10 @@
 use bytebuffer::ByteBuffer;
+use std::convert::TryFrom;
 use std::result;
 use std::{error::Error, fmt};
+
+#[macro_use]
+extern crate mem_macros;
 
 // Types
 type TpmiStCommandTag = u16;
@@ -31,11 +35,19 @@ impl fmt::Display for TpmError {
 }
 
 //
-// Tpm2BDigest
+// TPM2B_DIGEST
 //
-struct Tpm2BDigest {
+struct Tpm2bDigest<'a> {
     size: u16,
-    buffer: Vec<u8>,
+    buffer: &'a [u8],
+}
+
+//
+// TPML_DIGEST
+//
+struct TpmlDigest<'a> {
+    count: u32,
+    digests: &'a [Tpm2bDigest<'a>],
 }
 
 //
@@ -48,7 +60,7 @@ struct TpmsPcrSelection<'a> {
     pcr_select: &'a [u8],
 }
 
-impl Tpm2Struct for TpmsPcrSelection<'_> {
+impl Tpm2StructOut for TpmsPcrSelection<'_> {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.hash.pack(buff);
         self.sizeof_select.pack(buff);
@@ -64,7 +76,7 @@ struct TpmlPcrSelection<'a> {
     pcr_selections: &'a [TpmsPcrSelection<'a>],
 }
 
-impl Tpm2Struct for TpmlPcrSelection<'_> {
+impl Tpm2StructOut for TpmlPcrSelection<'_> {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.count.pack(buff);
         for pcr_selection in self.pcr_selections.iter() {
@@ -81,7 +93,7 @@ struct PcrReadCommand<'a> {
     pcr_selection_in: TpmlPcrSelection<'a>,
 }
 
-impl Tpm2Struct for PcrReadCommand<'_> {
+impl Tpm2StructOut for PcrReadCommand<'_> {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.tag.pack(buff);
         self.command_size.pack(buff);
@@ -91,38 +103,68 @@ impl Tpm2Struct for PcrReadCommand<'_> {
 }
 
 // tpm2_pcr_read response
-struct PcrReadResponse {
+struct PcrReadResponse<'a> {
     tag: TpmiStCommandTag,
     response_size: u32,
     response_code: TpmCc,
-    random_bytes: Tpm2BDigest,
+    random_bytes: Tpm2bDigest<'a>,
+    pcr_update_counter: u32,
+    pcr_selection_in: TpmlPcrSelection<'a>,
+    pcr_values: TpmlDigest<'a>,
 }
 
-// Tpm2Struct is a trait for object which can serialize themselves in
+impl Tpm2StructIn for PcrReadResponse<'_> {
+    fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), TpmError> {
+        Ok(())
+    }
+}
+
+// Tpm2StructOut is a trait for object which can serialize themselves in
 // big endian stream for TPM operations
-trait Tpm2Struct {
+trait Tpm2StructOut {
     fn pack(&self, buff: &mut ByteBuffer);
 }
 
+// Tpm2StructIn is a trait for TPM objects which can be deserialized from
+// a byte stream
+trait Tpm2StructIn {
+    fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), TpmError>;
+}
+
 // Primitive types have copy semantics, everything else has move semantics
-macro_rules! impl_tpm2_pack {
+macro_rules! impl_tpm2_io {
     ($T: ident) => {
-        impl Tpm2Struct for $T {
+        impl Tpm2StructOut for $T {
             fn pack(&self, buff: &mut ByteBuffer) {
                 buff.write_bytes(&self.to_be_bytes()[..]);
+            }
+        }
+
+        impl Tpm2StructIn for $T {
+            fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), TpmError> {
+                let byte_array = <[u8; size_of!($T)]>::try_from(&buff.read_bytes(size_of!($T))[..]);
+                match byte_array {
+                    Ok(byte_array) => {
+                        $T::from_be_bytes(byte_array);
+                        Ok(())
+                    }
+                    Err(_) => Err(TpmError {
+                        msg: String::from("could not prepare byteArray"),
+                    }),
+                }
             }
         }
     };
 }
 
-impl_tpm2_pack! { u8 }
-impl_tpm2_pack! { u16 }
-impl_tpm2_pack! { u32 }
-impl_tpm2_pack! { u64 }
+impl_tpm2_io! { u8 }
+impl_tpm2_io! { u16 }
+impl_tpm2_io! { u32 }
+impl_tpm2_io! { u64 }
 
-// pack packs multiple fields that implement the Tpm2Struct trait. These fields
+// pack packs multiple fields that implement the Tpm2StructOut trait. These fields
 // normally belong to Command/Response structures
-fn pack(fields: &[impl Tpm2Struct], buff: &mut ByteBuffer) {
+fn pack(fields: &[impl Tpm2StructOut], buff: &mut ByteBuffer) {
     for field in fields.iter() {
         field.pack(buff)
     }
