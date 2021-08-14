@@ -1,8 +1,11 @@
+use bytebuffer::ByteBuffer;
+use std::io;
+
 // TpmRawIO implements communication with the TPM via /dev/tpm* device file
-struct TpmRawIO {}
+pub struct TpmRawIO {}
 
 // Define a combined ReadWrite trait
-trait ReadWrite: io::Read + io::Write {}
+pub trait ReadWrite: io::Read + io::Write {}
 impl<T: io::Read + io::Write> ReadWrite for T {}
 
 // Implementation of ReadWrite trait for TpmRawIO
@@ -29,8 +32,8 @@ impl io::Write for TpmRawIO {
 
 // TpmDevice represents a TPM device implementing I/O operation
 // via internal rw object
-struct TpmDevice<'a> {
-    rw: &'a ReadWrite,
+pub struct TpmDevice<'a> {
+    pub rw: &'a ReadWrite,
 }
 
 // TpmDeviceOps is a trait defining operations supported by TpmDevice objects

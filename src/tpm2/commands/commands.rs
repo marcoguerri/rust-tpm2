@@ -1,12 +1,19 @@
+use crate::tpm2::errors;
+use crate::tpm2::serialization::inout;
+use crate::tpm2::types::tcg;
+use bytebuffer::ByteBuffer;
+use std::result;
+
 // tpm2_pcr_read command
-struct PcrReadCommand<'a> {
-    tag: TpmiStCommandTag,
-    command_size: u32,
-    command_code: TpmCc,
-    pcr_selection_in: TpmlPcrSelection<'a>,
+pub struct PcrReadCommand<'a> {
+    // TODO: Turn these fields into private
+    pub tag: tcg::TpmiStCommandTag,
+    pub command_size: u32,
+    pub command_code: tcg::TpmCc,
+    pub pcr_selection_in: tcg::TpmlPcrSelection<'a>,
 }
 
-impl Tpm2StructOut for PcrReadCommand<'_> {
+impl inout::Tpm2StructOut for PcrReadCommand<'_> {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.tag.pack(buff);
         self.command_size.pack(buff);
@@ -16,18 +23,18 @@ impl Tpm2StructOut for PcrReadCommand<'_> {
 }
 
 // tpm2_pcr_read response
-struct PcrReadResponse<'a> {
-    tag: TpmiStCommandTag,
+pub struct PcrReadResponse<'a> {
+    tag: tcg::TpmiStCommandTag,
     response_size: u32,
-    response_code: TpmCc,
-    random_bytes: Tpm2bDigest<'a>,
+    response_code: tcg::TpmCc,
+    random_bytes: tcg::Tpm2bDigest<'a>,
     pcr_update_counter: u32,
-    pcr_selection_in: TpmlPcrSelection<'a>,
-    pcr_values: TpmlDigest<'a>,
+    pcr_selection_in: tcg::TpmlPcrSelection<'a>,
+    pcr_values: tcg::TpmlDigest<'a>,
 }
 
-impl Tpm2StructIn for PcrReadResponse<'_> {
-    fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), TpmError> {
+impl inout::Tpm2StructIn for PcrReadResponse<'_> {
+    fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
         Ok(())
     }
 }
