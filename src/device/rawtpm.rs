@@ -1,5 +1,10 @@
+#![feature(with_options)]
 use bytebuffer::ByteBuffer;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
+use std::io::Error;
+use std::path::Path;
 
 // TpmRawIO implements communication with the TPM via /dev/tpm* device file
 pub struct TpmRawIO {}
@@ -18,8 +23,20 @@ impl io::Read for TpmRawIO {
 
 impl io::Write for TpmRawIO {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        println!("write on TpmRawIO called");
-        Ok(10)
+        let file = OpenOptions::new().read(true).write(true).open("/dev/tpm0");
+        let mut device_file = match file {
+            Err(err) => {
+                return Err(Error::new(
+                    err.kind(),
+                    format!("could not open /dev/tpm0: {}", err),
+                ))
+            }
+            Ok(device_file) => device_file,
+        };
+        match device_file.write_all(buf) {
+            Err(err) => return Err(err),
+            Ok(_) => Ok(buf.len()),
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -33,16 +50,45 @@ impl io::Write for TpmRawIO {
 // TpmDevice represents a TPM device implementing I/O operation
 // via internal rw object
 pub struct TpmDevice<'a> {
-    pub rw: &'a ReadWrite,
+    pub rw: &'a mut ReadWrite,
 }
 
 // TpmDeviceOps is a trait defining operations supported by TpmDevice objects
-trait TpmDeviceOps {
-    fn send_recv(&self, buff_out: &ByteBuffer, buff_in: &mut ByteBuffer);
+pub trait TpmDeviceOps {
+    fn send_recv(
+        &mut self,
+        buff_command: &ByteBuffer,
+        buff_answer: &mut ByteBuffer,
+    ) -> io::Result<()>;
 }
 
 impl TpmDeviceOps for TpmDevice<'_> {
-    fn send_recv(&self, buff_out: &ByteBuffer, buff_in: &mut ByteBuffer) {
-        println!("send_recv was called, all good at this point");
+    fn send_recv(
+        &mut self,
+        buff_command: &ByteBuffer,
+        buff_answer: &mut ByteBuffer,
+    ) -> io::Result<()> {
+        // send output buffer and read answer back
+        match self.rw.write(&buff_command.to_bytes()) {
+            Err(err) => {
+                return Err(Error::new(
+                    err.kind(),
+                    format!("could not write output buffer to TPM: {}", err),
+                ))
+            }
+            Ok(_) => (),
+        }
+        let mut buff_in = Vec::new();
+        match self.rw.read(&mut buff_in) {
+            Err(err) => {
+                return Err(Error::new(
+                    err.kind(),
+                    format!("could not read answer from TPM: {}", err),
+                ))
+            }
+            Ok(_) => (),
+        };
+        buff_answer.write_bytes(&buff_in);
+        Ok(())
     }
 }

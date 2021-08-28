@@ -4,6 +4,10 @@ use crate::tpm2::types::tcg;
 use bytebuffer::ByteBuffer;
 use std::result;
 
+// Size of the initial part of PcrReadCommand, not including PCR selection structure
+// TODO: this should be hidden from outside.
+pub const PCR_READ_PREAMBLE_SIZE: u32 = 10;
+
 // tpm2_pcr_read command
 pub struct PcrReadCommand<'a> {
     // TODO: Turn these fields into private
