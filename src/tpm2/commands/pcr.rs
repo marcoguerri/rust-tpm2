@@ -26,6 +26,7 @@ pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
 
     let pcr_selection = tcg::TpmlPcrSelection {
         count: 2,
+        //pcr_selections: &[pcr_selections_sha1, pcr_selections_sha256],
         pcr_selections: &[pcr_selections_sha1, pcr_selections_sha256],
     };
 
@@ -51,7 +52,7 @@ pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
 
     // write buffer to TPM device and read back response
     let mut tpm_device: rawtpm::TpmDevice = rawtpm::TpmDevice {
-        rw: &mut rawtpm::TpmRawIO {},
+        rw: &mut rawtpm::TpmRawIO::new(),
     };
 
     println!(

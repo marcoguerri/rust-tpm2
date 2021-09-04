@@ -3,39 +3,76 @@ use bytebuffer::ByteBuffer;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
-// TpmRawIO implements communication with the TPM via /dev/tpm* device file
-pub struct TpmRawIO {}
-
-// Define a combined ReadWrite trait
+// Define a combined ReadWrite trait.
 pub trait ReadWrite: io::Read + io::Write {}
 impl<T: io::Read + io::Write> ReadWrite for T {}
+
+// TpmRawIO implements communication with the TPM via /dev/tpm* device file
+pub struct TpmRawIO {
+    device_file: Option<File>,
+}
+
+impl TpmRawIO {
+    pub fn new() -> Self {
+        TpmRawIO { device_file: None }
+    }
+}
 
 // Implementation of ReadWrite trait for TpmRawIO
 impl io::Read for TpmRawIO {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        println!("read on TpmRawIO called");
-        Ok(10)
+        match &mut self.device_file {
+            None => {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "device file not open for reading",
+                ))
+            }
+            Some(f) => {
+                thread::sleep(Duration::from_millis(1000));
+                match f.read(buf) {
+                    Err(err) => return Err(err),
+                    Ok(_) => Ok(buf.len()),
+                }
+            }
+        }
     }
 }
 
 impl io::Write for TpmRawIO {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let file = OpenOptions::new().read(true).write(true).open("/dev/tpm0");
-        let mut device_file = match file {
-            Err(err) => {
-                return Err(Error::new(
+        match self.device_file {
+            None => match OpenOptions::new().read(true).write(true).open("/dev/tpm0") {
+                Err(err) => {
+                    return Err(Error::new(
+                        err.kind(),
+                        format!("could not open /dev/tpm0: {}", err),
+                    ))
+                }
+                Ok(f) => {
+                    self.device_file = Some(f);
+                }
+            },
+            Some(_) => (),
+        }
+
+        match &mut self.device_file {
+            None => Err(Error::new(
+                ErrorKind::Other,
+                "device file is not set, cannot write input buffer",
+            )),
+            Some(f) => match f.write_all(buf) {
+                Err(err) => Err(Error::new(
                     err.kind(),
-                    format!("could not open /dev/tpm0: {}", err),
-                ))
-            }
-            Ok(device_file) => device_file,
-        };
-        match device_file.write_all(buf) {
-            Err(err) => return Err(err),
-            Ok(_) => Ok(buf.len()),
+                    format!("could not write buffer to TPM device {}", err),
+                )),
+                Ok(_) => Ok(buf.len()),
+            },
         }
     }
 
@@ -78,7 +115,7 @@ impl TpmDeviceOps for TpmDevice<'_> {
             }
             Ok(_) => (),
         }
-        let mut buff_in = Vec::new();
+        let mut buff_in = [0; 4096];
         match self.rw.read(&mut buff_in) {
             Err(err) => {
                 return Err(Error::new(
@@ -86,7 +123,9 @@ impl TpmDeviceOps for TpmDevice<'_> {
                     format!("could not read answer from TPM: {}", err),
                 ))
             }
-            Ok(_) => (),
+            Ok(n) => {
+                println!("read {}", n);
+            }
         };
         buff_answer.write_bytes(&buff_in);
         Ok(())
