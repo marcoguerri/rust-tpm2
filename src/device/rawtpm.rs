@@ -5,8 +5,6 @@ use std::fs::OpenOptions;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
-use std::thread;
-use std::time::Duration;
 
 // Define a combined ReadWrite trait.
 pub trait ReadWrite: io::Read + io::Write {}
@@ -33,13 +31,10 @@ impl io::Read for TpmRawIO {
                     "device file not open for reading",
                 ))
             }
-            Some(f) => {
-                thread::sleep(Duration::from_millis(1000));
-                match f.read(buf) {
-                    Err(err) => return Err(err),
-                    Ok(_) => Ok(buf.len()),
-                }
-            }
+            Some(f) => match f.read(buf) {
+                Err(err) => return Err(err),
+                Ok(n) => Ok(n),
+            },
         }
     }
 }
