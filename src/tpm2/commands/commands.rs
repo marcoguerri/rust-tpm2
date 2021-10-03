@@ -2,26 +2,61 @@ use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::types::tcg;
 use bytebuffer::ByteBuffer;
+use std::mem;
 use std::result;
 
-// Size of the initial part of PcrReadCommand, not including PCR selection structure
-// TODO: this should be hidden from outside.
-pub const PCR_READ_PREAMBLE_SIZE: u32 = 10;
+use crate::tpm2::serialization::inout::Tpm2StructOut;
 
-// tpm2_pcr_read command
-pub struct PcrReadCommand<'a> {
-    // TODO: Turn these fields into private
-    pub tag: tcg::TpmiStCommandTag,
-    pub command_size: u32,
-    pub command_code: tcg::TpmCc,
-    pub pcr_selection_in: tcg::TpmlPcrSelection<'a>,
+pub struct CommandHeader {
+    tag: tcg::TpmiStCommandTag,
+    command_size: u32,
+    command_code: tcg::TpmCc,
 }
 
-impl inout::Tpm2StructOut for PcrReadCommand<'_> {
+impl inout::Tpm2StructOut for CommandHeader {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.tag.pack(buff);
         self.command_size.pack(buff);
         self.command_code.pack(buff);
+    }
+}
+
+// tpm2_pcr_read command
+pub struct PcrReadCommand<'a> {
+    header: CommandHeader,
+    pcr_selection_in: tcg::TpmlPcrSelection<'a>,
+}
+
+pub fn NewPcrReadCommand(
+    tag: tcg::TpmiStCommandTag,
+    pcr_selection: tcg::TpmlPcrSelection,
+) -> result::Result<PcrReadCommand, errors::TpmError> {
+    let mut buffer_pcr_selection = ByteBuffer::new();
+    pcr_selection.pack(&mut buffer_pcr_selection);
+    let pcr_selection_size = buffer_pcr_selection.to_bytes().len();
+
+    if pcr_selection_size > u32::MAX as usize {
+        errors::TpmError {
+            msg: String::from("pcr_selection size is too big"),
+        };
+    }
+
+    Ok(PcrReadCommand {
+        header: CommandHeader {
+            tag: tag,
+            command_size: mem::size_of::<tcg::TpmiStCommandTag>() as u32
+                + mem::size_of::<u32>() as u32
+                + mem::size_of::<tcg::TpmCc>() as u32
+                + pcr_selection_size as u32,
+            command_code: tcg::TPM_CC_PCR_READ,
+        },
+        pcr_selection_in: pcr_selection,
+    })
+}
+
+impl inout::Tpm2StructOut for PcrReadCommand<'_> {
+    fn pack(&self, buff: &mut ByteBuffer) {
+        self.header.pack(buff);
         self.pcr_selection_in.pack(buff);
     }
 }

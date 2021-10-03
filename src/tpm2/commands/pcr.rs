@@ -1,6 +1,6 @@
-use crate::device::rawtpm;
-use crate::device::rawtpm::TpmDeviceOps;
-use crate::device::tcpstreamtpm;
+use crate::device::raw;
+use crate::device::raw::TpmDeviceOps;
+use crate::device::tcp;
 use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
@@ -27,34 +27,23 @@ pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
 
     let pcr_selection = tcg::TpmlPcrSelection {
         count: 2,
-        //pcr_selections: &[pcr_selections_sha1, pcr_selections_sha256],
         pcr_selections: &[pcr_selections_sha1, pcr_selections_sha256],
     };
 
     let mut buffer_pcr_selection = ByteBuffer::new();
     pcr_selection.pack(&mut buffer_pcr_selection);
 
-    let pcr_selection_size = buffer_pcr_selection.to_bytes().len();
-    if pcr_selection_size > u32::MAX as usize {
-        errors::TpmError {
-            msg: String::from("pcr_selection size is too big"),
+    let cmd_pcr_read =
+        match super::commands::NewPcrReadCommand(tcg::TPM_ST_NO_SESSION, pcr_selection) {
+            Ok(cmd_pcr_read) => cmd_pcr_read,
+            Err(error) => return Err(error),
         };
-    }
-
-    let cmd_pcr_read = super::commands::PcrReadCommand {
-        tag: tcg::TPM_ST_NO_SESSION,
-        command_size: super::commands::PCR_READ_PREAMBLE_SIZE + pcr_selection_size as u32,
-        command_code: tcg::TPM_CC_PCR_READ,
-        pcr_selection_in: pcr_selection,
-    };
 
     let mut buffer = ByteBuffer::new();
     inout::pack(&[cmd_pcr_read], &mut buffer);
 
-    // write buffer to TPM device and read back response
-    let mut tpm_device: rawtpm::TpmDevice = rawtpm::TpmDevice {
-        //        rw: &mut rawtpm::TpmRawIO::new(),
-        rw: &mut tcpstreamtpm::TpmSwtpmIO::new(),
+    let mut tpm_device: raw::TpmDevice = raw::TpmDevice {
+        rw: &mut tcp::TpmSwtpmIO::new(),
     };
 
     println!(

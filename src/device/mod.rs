@@ -1,2 +1,2 @@
-pub mod rawtpm;
-pub mod tcpstreamtpm;
+pub mod raw;
+pub mod tcp;
