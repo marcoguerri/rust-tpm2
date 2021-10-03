@@ -1,5 +1,6 @@
 use crate::device::rawtpm;
 use crate::device::rawtpm::TpmDeviceOps;
+use crate::device::tcpstreamtpm;
 use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
@@ -52,7 +53,8 @@ pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
 
     // write buffer to TPM device and read back response
     let mut tpm_device: rawtpm::TpmDevice = rawtpm::TpmDevice {
-        rw: &mut rawtpm::TpmRawIO::new(),
+        //        rw: &mut rawtpm::TpmRawIO::new(),
+        rw: &mut tcpstreamtpm::TpmSwtpmIO::new(),
     };
 
     println!(

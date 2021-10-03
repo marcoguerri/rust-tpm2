@@ -10,7 +10,7 @@ use std::path::Path;
 pub trait ReadWrite: io::Read + io::Write {}
 impl<T: io::Read + io::Write> ReadWrite for T {}
 
-// TpmRawIO implements communication with the TPM via /dev/tpm* device file
+// TpmRawIO implements communication with the TPM via /dev/tpm[0-9] device file
 pub struct TpmRawIO {
     device_file: Option<File>,
 }
