@@ -9,25 +9,23 @@ use bytebuffer::ByteBuffer;
 use std::mem;
 use std::result;
 
-// tpm2_pcr_read calls tpm2_pcr_read function returning the content of all
-// PCR Registers in SHA1 and SHA256 form.
+// tpm2_pcr_read issues a TPM2_PCR_Read command with TpmsPcrSelection configuration
+// which selects all PCR registers for SHA1 and SHA256 banks.
 pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
-    // build PcrSelection structures, selecting all PCR Registers, for both SHA1 and SHA256
-    let pcr_selections_sha256 = tcg::TpmsPcrSelection {
-        hash: tcg::TPM_ALG_SHA256,
-        sizeof_select: 3,
-        pcr_select: &[0xFF, 0xFF, 0xFF],
-    };
-
-    let pcr_selections_sha1 = tcg::TpmsPcrSelection {
-        hash: tcg::TPM_ALG_SHA1,
-        sizeof_select: 3,
-        pcr_select: &[0xFF, 0xFF, 0xFF],
-    };
-
     let pcr_selection = tcg::TpmlPcrSelection {
         count: 2,
-        pcr_selections: &[pcr_selections_sha1, pcr_selections_sha256],
+        pcr_selections: &[
+            tcg::TpmsPcrSelection {
+                hash: tcg::TPM_ALG_SHA256,
+                sizeof_select: 3,
+                pcr_select: &[0xFF, 0xFF, 0xFF],
+            },
+            tcg::TpmsPcrSelection {
+                hash: tcg::TPM_ALG_SHA1,
+                sizeof_select: 3,
+                pcr_select: &[0xFF, 0xFF, 0xFF],
+            },
+        ],
     };
 
     let mut buffer_pcr_selection = ByteBuffer::new();
@@ -56,9 +54,13 @@ pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
         Err(err) => println!("error during send_recv: {}", err),
         Ok(_) => println!("answer received correctly!"),
     }
-    println!(
-        "got response buffer as {}",
-        hex::encode(resp_buffer.to_bytes())
-    );
-    Ok(0)
+
+    let resp = super::commands::NewPcrReadResponse(&mut resp_buffer);
+    match resp {
+        Ok(_) => {
+            println!("{:?}", resp);
+            Ok(0)
+        }
+        Err(err) => Err(err),
+    }
 }

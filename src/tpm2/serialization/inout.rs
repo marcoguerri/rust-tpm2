@@ -3,7 +3,7 @@ use bytebuffer::ByteBuffer;
 use std::convert::TryFrom;
 use std::result;
 
-// Tpm2StructOut is a trait for object which can serialize themselves in
+// Tpm2StructOut is a trait for TPM objects which can be serialized in
 // big endian stream for TPM operations
 pub trait Tpm2StructOut {
     fn pack(&self, buff: &mut ByteBuffer);
@@ -12,7 +12,7 @@ pub trait Tpm2StructOut {
 // Tpm2StructIn is a trait for TPM objects which can be deserialized from
 // a byte stream
 pub trait Tpm2StructIn {
-    fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError>;
+    fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError>;
 }
 
 // impl_tpm2_io is a macro which implments Tpm2StructIn and Tpm2StructOut for
@@ -27,11 +27,11 @@ macro_rules! impl_tpm2_io {
         }
 
         impl Tpm2StructIn for $T {
-            fn unpack(&self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
+            fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
                 let byte_array = <[u8; size_of!($T)]>::try_from(&buff.read_bytes(size_of!($T))[..]);
                 match byte_array {
                     Ok(byte_array) => {
-                        $T::from_be_bytes(byte_array);
+                        *self = $T::from_be_bytes(byte_array);
                         Ok(())
                     }
                     Err(_) => Err(errors::TpmError {
