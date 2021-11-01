@@ -15,6 +15,13 @@ pub struct CommandHeader {
     command_code: tcg::TpmCc,
 }
 
+#[derive(Default, Debug)]
+pub struct ResponseHeader {
+    tag: tcg::TpmiStCommandTag,
+    response_size: u32,
+    response_code: tcg::TpmRc,
+}
+
 impl inout::Tpm2StructOut for CommandHeader {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.tag.pack(buff);
@@ -23,17 +30,17 @@ impl inout::Tpm2StructOut for CommandHeader {
     }
 }
 
-impl inout::Tpm2StructIn for CommandHeader {
+impl inout::Tpm2StructIn for ResponseHeader {
     fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
         match self.tag.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
         };
-        match self.command_size.unpack(buff) {
+        match self.response_size.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
         };
-        match self.command_code.unpack(buff) {
+        match self.response_code.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
         }
@@ -42,9 +49,9 @@ impl inout::Tpm2StructIn for CommandHeader {
 }
 
 // TPM2_PCR_Read command
-pub struct PcrReadCommand<'a> {
+pub struct PcrReadCommand {
     header: CommandHeader,
-    pcr_selection_in: tcg::TpmlPcrSelection<'a>,
+    pcr_selection_in: tcg::TpmlPcrSelection,
 }
 
 pub fn NewPcrReadCommand(
@@ -74,7 +81,7 @@ pub fn NewPcrReadCommand(
     })
 }
 
-impl inout::Tpm2StructOut for PcrReadCommand<'_> {
+impl inout::Tpm2StructOut for PcrReadCommand {
     fn pack(&self, buff: &mut ByteBuffer) {
         self.header.pack(buff);
         self.pcr_selection_in.pack(buff);
@@ -83,16 +90,15 @@ impl inout::Tpm2StructOut for PcrReadCommand<'_> {
 
 // TPM2_PCR_Read response
 #[derive(Default, Debug)]
-pub struct PcrReadResponse<'a> {
-    header: CommandHeader,
+pub struct PcrReadResponse {
+    header: ResponseHeader,
     pcr_update_counter: u32,
-    pcr_selection_in: tcg::TpmlPcrSelection<'a>,
-    pcr_values: tcg::TpmlDigest<'a>,
+    pcr_selection_in: tcg::TpmlPcrSelection,
+    pcr_values: tcg::TpmlDigest,
 }
 
-impl inout::Tpm2StructIn for PcrReadResponse<'_> {
+impl inout::Tpm2StructIn for PcrReadResponse {
     fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
-        // TODO: check response code
         match self.header.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
@@ -103,6 +109,11 @@ impl inout::Tpm2StructIn for PcrReadResponse<'_> {
         }
 
         match self.pcr_selection_in.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+
+        match self.pcr_values.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
         }

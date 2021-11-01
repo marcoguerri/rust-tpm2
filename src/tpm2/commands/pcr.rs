@@ -14,16 +14,16 @@ use std::result;
 pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
     let pcr_selection = tcg::TpmlPcrSelection {
         count: 2,
-        pcr_selections: &[
+        pcr_selections: vec![
             tcg::TpmsPcrSelection {
                 hash: tcg::TPM_ALG_SHA256,
                 sizeof_select: 3,
-                pcr_select: &[0xFF, 0xFF, 0xFF],
+                pcr_select: vec![0xFF, 0xFF, 0xFF],
             },
             tcg::TpmsPcrSelection {
                 hash: tcg::TPM_ALG_SHA1,
                 sizeof_select: 3,
-                pcr_select: &[0xFF, 0xFF, 0xFF],
+                pcr_select: vec![0xFF, 0xFF, 0xFF],
             },
         ],
     };
@@ -54,7 +54,6 @@ pub fn tpm2_pcr_read() -> result::Result<u32, errors::TpmError> {
         Err(err) => println!("error during send_recv: {}", err),
         Ok(_) => println!("answer received correctly!"),
     }
-
     let resp = super::commands::NewPcrReadResponse(&mut resp_buffer);
     match resp {
         Ok(_) => {
