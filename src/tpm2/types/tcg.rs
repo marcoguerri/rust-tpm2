@@ -31,6 +31,8 @@ pub struct Tpm2bDigest {
 #[derive(Default, Debug)]
 pub struct TpmlDigest {
     count: u32,
+    // digests can contain at most 8 entries. From TPM 2.0 Spec, Structures,
+    // TPML_DIGEST is defined as digests[count]{:8}
     digests: Vec<Tpm2bDigest>,
 }
 
@@ -115,6 +117,7 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
                 }
             }
         }
+
         Ok(())
     }
 }

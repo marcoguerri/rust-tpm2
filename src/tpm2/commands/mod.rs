@@ -1,2 +1,3 @@
 pub mod commands;
-pub mod pcr;
+pub mod pcrread;
+pub mod pcrs;

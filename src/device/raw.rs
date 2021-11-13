@@ -4,7 +4,6 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::{Error, ErrorKind};
-use std::path::Path;
 
 // Define a combined ReadWrite trait.
 pub trait ReadWrite: io::Read + io::Write {}
@@ -13,12 +12,6 @@ impl<T: io::Read + io::Write> ReadWrite for T {}
 // TpmRawIO implements communication with the TPM via /dev/tpm[0-9] device file
 pub struct TpmRawIO {
     device_file: Option<File>,
-}
-
-impl TpmRawIO {
-    pub fn new() -> Self {
-        TpmRawIO { device_file: None }
-    }
 }
 
 // Implementation of ReadWrite trait for TpmRawIO
