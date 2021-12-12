@@ -27,6 +27,12 @@ pub struct Tpm2bDigest {
     buffer: Vec<u8>,
 }
 
+impl Tpm2bDigest {
+    pub fn get_buffer(&self) -> &[u8] {
+        &self.buffer[..]
+    }
+}
+
 // TPML_DIGEST
 #[derive(Default, Debug)]
 pub struct TpmlDigest {
@@ -34,6 +40,17 @@ pub struct TpmlDigest {
     // digests can contain at most 8 entries. From TPM 2.0 Spec, Structures,
     // TPML_DIGEST is defined as digests[count]{:8}
     digests: Vec<Tpm2bDigest>,
+}
+
+impl TpmlDigest {
+    pub fn get_digest(&self, num: u32) -> result::Result<&Tpm2bDigest, errors::TpmError> {
+        if num >= self.count {
+            return Err(errors::TpmError {
+                msg: String::from("not enough digests"),
+            });
+        }
+        Ok(&self.digests[num as usize])
+    }
 }
 
 // TPMS_PCR_SELECTION
@@ -73,7 +90,7 @@ impl inout::Tpm2StructIn for TpmlDigest {
             Err(err) => return Err(err),
             _ => (),
         }
-        for count in 0..self.count {
+        for _pcr_count in 0..self.count {
             let mut size: u16 = 0;
             match size.unpack(buff) {
                 Err(err) => return Err(err),
@@ -108,7 +125,7 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
             Err(err) => return Err(err),
             _ => (),
         }
-        for count in 0..self.count {
+        for _pcr_count in 0..self.count {
             let mut pcr_selection: TpmsPcrSelection = Default::default();
             match pcr_selection.unpack(buff) {
                 Err(err) => return Err(err),

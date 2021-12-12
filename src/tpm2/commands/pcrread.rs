@@ -5,12 +5,14 @@ use crate::tpm2::commands::commands::CommandHeader;
 use crate::tpm2::commands::commands::ResponseHeader;
 use crate::tpm2::commands::pcrs::PCRSelection;
 use crate::tpm2::commands::pcrs::PCRValues;
+use crate::tpm2::commands::pcrs::PCRs;
 use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::Tpm2StructIn;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
 use crate::tpm2::types::tcg;
 use bytebuffer::ByteBuffer;
+use std::collections::HashMap;
 use std::mem;
 use std::result;
 
@@ -100,18 +102,49 @@ impl PcrReadResponse {
             Err(error) => Err(error),
         }
     }
+
+    // to_pcr_values turns TpmlPcrSelection and TpmlDigest structures into
+    // a PCRValues
+    pub fn to_pcr_values(&self) -> result::Result<PCRs, errors::TpmError> {
+        let mut pcrs: PCRs = PCRs::new();
+
+        for tpms_selection in &self.pcr_selection_in.pcr_selections {
+            for (pcr_bitmap, octet) in tpms_selection.pcr_select.iter().enumerate() {
+                for n in 0..8 {
+                    if pcr_bitmap >> n & 0x1 == 0x1 {
+                        match self.pcr_values.get_digest(n + 8 * *octet as u32) {
+                            Ok(digest) => {
+                                pcrs.add(
+                                    tpms_selection.hash,          // algorithm
+                                    n + 8 * *octet as u32,        // pcr register number
+                                    digest.get_buffer().to_vec(), // digest
+                                );
+                            }
+                            Err(err) => {
+                                return Err(errors::TpmError {
+                                    msg: format!("cannot get digest number {}", err.to_string()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(pcrs)
+    }
 }
 
 // tpm2_pcr_read issues a TPM2_PCR_Read command with a PCR selection based on input PCRSelection
-pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRValues, errors::TpmError> {
+pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors::TpmError> {
     let pcr_selection = tcg::TpmlPcrSelection {
-        count: 2,
+        count: 1,
         pcr_selections: vec![
-            tcg::TpmsPcrSelection {
-                hash: tcg::TPM_ALG_SHA1,
-                sizeof_select: 3,
-                pcr_select: vec![0xFF, 0xFF, 0xFF],
-            },
+            //tcg::TpmsPcrSelection {
+            //    hash: tcg::TPM_ALG_SHA1,
+            //    sizeof_select: 3,
+            //    pcr_select: vec![0xFF, 0xFF, 0xFF],
+            //},
             tcg::TpmsPcrSelection {
                 hash: tcg::TPM_ALG_SHA256,
                 sizeof_select: 3,
@@ -145,9 +178,10 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRValues, er
         Err(err) => println!("error during send_recv: {}", err),
         Ok(_) => println!("answer received correctly!"),
     }
+
     let resp = PcrReadResponse::new(&mut resp_buffer);
     match resp {
-        Ok(_) => Ok(PCRValues::new()),
-        Err(err) => Err(err),
+        Ok(pcr_read_response) => pcr_read_response.to_pcr_values(),
+        Err(err) => return Err(err),
     }
 }
