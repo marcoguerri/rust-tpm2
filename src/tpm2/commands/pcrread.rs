@@ -109,14 +109,18 @@ impl PcrReadResponse {
         let mut pcrs: PCRs = PCRs::new();
 
         for tpms_selection in &self.pcr_selection_in.pcr_selections {
-            for (pcr_bitmap, octet) in tpms_selection.pcr_select.iter().enumerate() {
+            // TpmsPcrSelection for a specific algorithm as specified by tpms_selection.hash
+            for (index, pcr_bitmap) in tpms_selection.pcr_select.iter().enumerate() {
+                // For each byte bitmap in TpmsPcrSelection.pcr_select, decode which
+                // PCR is being referenced and de-serialize the corresponding TpmlDigest.
+                // TpmlDigest can carry at most 8 Tpm2bDigest structures
                 for n in 0..8 {
                     if pcr_bitmap >> n & 0x1 == 0x1 {
-                        match self.pcr_values.get_digest(n + 8 * *octet as u32) {
+                        match self.pcr_values.get_digest(n + 8 * index as u32) {
                             Ok(digest) => {
                                 pcrs.add(
                                     tpms_selection.hash,          // algorithm
-                                    n + 8 * *octet as u32,        // pcr register number
+                                    n + 8 * index as u32,         // pcr register number
                                     digest.get_buffer().to_vec(), // digest
                                 );
                             }
@@ -136,52 +140,72 @@ impl PcrReadResponse {
 }
 
 // tpm2_pcr_read issues a TPM2_PCR_Read command with a PCR selection based on input PCRSelection
+// Response structure holds a TpmlDigest structure which can hold at most 8 Tpm2bDigest. Therefore,
+// we need to issue multiple commands with TpmsPcrSelection configured accordingly.
 pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors::TpmError> {
-    let pcr_selection = tcg::TpmlPcrSelection {
-        count: 1,
-        pcr_selections: vec![
-            //tcg::TpmsPcrSelection {
-            //    hash: tcg::TPM_ALG_SHA1,
-            //    sizeof_select: 3,
-            //    pcr_select: vec![0xFF, 0xFF, 0xFF],
-            //},
-            tcg::TpmsPcrSelection {
-                hash: tcg::TPM_ALG_SHA256,
-                sizeof_select: 3,
-                pcr_select: vec![0xFF, 0xFF, 0xFF],
-            },
-        ],
-    };
-
-    let mut buffer_pcr_selection = ByteBuffer::new();
-    pcr_selection.pack(&mut buffer_pcr_selection);
-
-    let cmd_pcr_read = match PcrReadCommand::new(tcg::TPM_ST_NO_SESSION, pcr_selection) {
-        Ok(cmd_pcr_read) => cmd_pcr_read,
-        Err(error) => return Err(error),
-    };
-
-    let mut buffer = ByteBuffer::new();
-    inout::pack(&[cmd_pcr_read], &mut buffer);
-
     let mut tpm_device: raw::TpmDevice = raw::TpmDevice {
         rw: &mut tcp::TpmSwtpmIO::new(),
     };
 
-    println!(
-        "command serialization for cmd_pcr_read: {}",
-        hex::encode(buffer.to_bytes())
-    );
+    let mut pcr_values: Vec<PCRs> = Vec::new();
 
-    let mut resp_buffer = ByteBuffer::new();
-    match tpm_device.send_recv(&buffer, &mut resp_buffer) {
-        Err(err) => println!("error during send_recv: {}", err),
-        Ok(_) => println!("answer received correctly!"),
+    for pcr_selection in selection {
+        let mut pcr_map = vec![0x00, 0x00, 0x00];
+        let mut pcr_count = 0;
+
+        for (index, pcr) in pcr_selection.get_pcrs().iter().enumerate() {
+            let pcr_map_index: usize = (pcr / 8) as usize;
+            pcr_map[pcr_map_index] = pcr_map[pcr_map_index] | (0x1 << pcr % 8);
+            pcr_count += 1;
+
+            if pcr_count == 8 || index == pcr_selection.get_pcrs().len() - 1 {
+                // issue the PCR read command and continue reading through the
+                // PCRSelection structure
+                let pcr_selection = tcg::TpmlPcrSelection {
+                    count: 1,
+                    pcr_selections: vec![tcg::TpmsPcrSelection {
+                        hash: pcr_selection.get_algo(),
+                        sizeof_select: 3,
+                        pcr_select: pcr_map,
+                    }],
+                };
+
+                let cmd_pcr_read = match PcrReadCommand::new(tcg::TPM_ST_NO_SESSION, pcr_selection)
+                {
+                    Ok(cmd_pcr_read) => cmd_pcr_read,
+                    Err(error) => return Err(error),
+                };
+
+                let mut buffer = ByteBuffer::new();
+                inout::pack(&[cmd_pcr_read], &mut buffer);
+
+                println!(
+                    "command serialization for cmd_pcr_read: {}",
+                    hex::encode(buffer.to_bytes())
+                );
+
+                let mut resp_buffer = ByteBuffer::new();
+                match tpm_device.send_recv(&buffer, &mut resp_buffer) {
+                    Err(err) => println!("error during send_recv: {}", err),
+                    Ok(_) => println!("answer received correctly!"),
+                }
+                let resp = PcrReadResponse::new(&mut resp_buffer);
+                match resp {
+                    Ok(pcr_read_response) => match pcr_read_response.to_pcr_values() {
+                        Ok(pcrs) => pcr_values.push(pcrs),
+                        Err(err) => return Err(err),
+                    },
+                    Err(err) => return Err(err),
+                };
+
+                pcr_map = vec![0x00, 0x00, 0x00];
+                pcr_count = 0;
+            }
+        }
     }
 
-    let resp = PcrReadResponse::new(&mut resp_buffer);
-    match resp {
-        Ok(pcr_read_response) => pcr_read_response.to_pcr_values(),
-        Err(err) => return Err(err),
-    }
+    println!("pcr structurs: {:?}", pcr_values);
+    Err(errors::TpmError {
+        msg: "not implemented".to_string(),
+    })
 }

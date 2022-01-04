@@ -38,6 +38,7 @@ impl std::fmt::Display for PCRValues {
 }
 
 // PCRs represents a set of multi-algorithm PCR values
+#[derive(Debug)]
 pub struct PCRs {
     pcrs: HashMap<tcg::TpmAlgId, PCRValues>,
 }
@@ -89,5 +90,13 @@ impl PCRSelection {
             algorithm: tcg::TPM_ALG_SHA256,
             pcrs: pcrs,
         }
+    }
+
+    pub fn get_pcrs(&self) -> &Vec<u8> {
+        &self.pcrs
+    }
+
+    pub fn get_algo(&self) -> tcg::TpmAlgId {
+        self.algorithm
     }
 }

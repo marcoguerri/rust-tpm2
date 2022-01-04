@@ -79,7 +79,10 @@ impl inout::Tpm2StructIn for TpmsPcrSelection {
             Err(err) => return Err(err),
             _ => (),
         }
+
+        println!("size of select if {:?}", self.sizeof_select);
         self.pcr_select = buff.read_bytes(self.sizeof_select as usize);
+        println!("pcr_select is {:?}", self.pcr_select);
         Ok(())
     }
 }
@@ -125,6 +128,7 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
             Err(err) => return Err(err),
             _ => (),
         }
+        println!("count is {:?}", self.count);
         for _pcr_count in 0..self.count {
             let mut pcr_selection: TpmsPcrSelection = Default::default();
             match pcr_selection.unpack(buff) {
