@@ -1,4 +1,3 @@
-#![feature(with_options)]
 use bytebuffer::ByteBuffer;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -75,7 +74,7 @@ impl io::Write for TpmRawIO {
 // TpmDevice represents a TPM device implementing I/O operation
 // via internal rw object
 pub struct TpmDevice<'a> {
-    pub rw: &'a mut ReadWrite,
+    pub rw: &'a mut dyn ReadWrite,
 }
 
 // TpmDeviceOps is a trait defining operations supported by TpmDevice objects
@@ -111,9 +110,7 @@ impl TpmDeviceOps for TpmDevice<'_> {
                     format!("could not read answer from TPM: {}", err),
                 ))
             }
-            Ok(n) => {
-                println!("read {}", n);
-            }
+            _ => (),
         };
         buff_answer.write_bytes(&buff_in);
         Ok(())

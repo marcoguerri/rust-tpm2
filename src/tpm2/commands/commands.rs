@@ -36,16 +36,6 @@ impl inout::Tpm2StructOut for CommandHeader {
     }
 }
 
-impl ResponseHeader {
-    pub fn new(tag: tcg::TpmiStCommandTag, response_size: u32, response_code: tcg::TpmRc) -> Self {
-        ResponseHeader {
-            tag: tag,
-            response_size: response_size,
-            response_code: response_code,
-        }
-    }
-}
-
 impl inout::Tpm2StructIn for ResponseHeader {
     fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
         match self.tag.unpack(buff) {

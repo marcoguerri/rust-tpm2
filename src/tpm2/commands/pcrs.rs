@@ -1,5 +1,8 @@
 use crate::tpm2::types::tcg;
 use std::collections::HashMap;
+use std::ops::Index;
+
+pub const MAX_PCR: u32 = 23;
 
 // PCRValues represents a set of PCR registers values
 #[derive(Debug)]
@@ -17,18 +20,27 @@ impl PCRValues {
     pub fn add(&mut self, pcr_num: u32, hash: Vec<u8>) {
         self.pcrs.insert(pcr_num, hash);
     }
+
+    pub fn get_map(&self) -> &HashMap<u32, Vec<u8>> {
+        return &self.pcrs;
+    }
+
+    pub fn merge(&mut self, map: &HashMap<u32, Vec<u8>>) {
+        self.pcrs
+            .extend(map.into_iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
 }
 
 impl std::fmt::Display for PCRValues {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for pcr in 0..25 as u32 {
+        for pcr in 0..MAX_PCR + 1 as u32 {
             if self.pcrs.contains_key(&pcr) {
                 match self.pcrs.get(&pcr) {
                     Some(digest) => {
-                        write!(f, "{} / {}\n", pcr, hex::encode(digest));
+                        let _ = write!(f, "{} / {}\n", pcr, hex::encode(digest));
                     }
                     None => {
-                        write!(f, "N/A\n");
+                        let _ = write!(f, "N/A\n");
                     }
                 }
             }
@@ -60,8 +72,27 @@ impl PCRs {
             Some(pcr_values) => {
                 pcr_values.add(pcr_num, value);
             }
-
             None => {}
+        }
+    }
+
+    pub fn get_map(&self) -> &HashMap<tcg::TpmAlgId, PCRValues> {
+        &self.pcrs
+    }
+
+    pub fn merge(&mut self, map: &HashMap<tcg::TpmAlgId, PCRValues>) {
+        for algo in map.keys() {
+            if self.pcrs.contains_key(algo) {
+                if let Some(pcr_values) = self.pcrs.get_mut(algo) {
+                    pcr_values.merge(map.index(algo).get_map());
+                } else {
+                    panic!("cannot mutate pcr values");
+                }
+            } else {
+                let mut pcr_values: PCRValues = PCRValues::new();
+                pcr_values.merge(map.index(algo).get_map());
+                self.pcrs.insert(*algo, pcr_values);
+            }
         }
     }
 }
@@ -69,15 +100,15 @@ impl PCRs {
 impl std::fmt::Display for PCRs {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for (key, value) in &self.pcrs {
-            write!(f, "Algo: {}\n", key);
-            write!(f, "{}", value);
-            write!(f, "\n");
+            let _ = write!(f, "Algo: {}\n", key);
+            let _ = write!(f, "{}", value);
+            let _ = write!(f, "\n");
         }
         Ok(())
     }
 }
 
-// PCRSelection represents a selection of PCR registers
+// PCRSelection represents a selection of PCR registers to manipulate with TPM commands
 #[derive(Debug)]
 pub struct PCRSelection {
     algorithm: tcg::TpmAlgId,

@@ -18,7 +18,7 @@ pub const TPM_ST_NO_SESSION: TpmiStCommandTag = 0x8001;
 
 // Algorithms
 pub const TPM_ALG_SHA256: TpmAlgId = 0x000B;
-pub const TPM_ALG_SHA1: TpmAlgId = 0x0004;
+// pub const TPM_ALG_SHA1: TpmAlgId = 0x0004;
 
 // TPM2B_DIGEST
 #[derive(Default, Debug)]
@@ -46,10 +46,17 @@ impl TpmlDigest {
     pub fn get_digest(&self, num: u32) -> result::Result<&Tpm2bDigest, errors::TpmError> {
         if num >= self.count {
             return Err(errors::TpmError {
-                msg: String::from("not enough digests"),
+                msg: String::from(format!(
+                    "digest {} is > than available digests {}",
+                    num, self.count
+                )),
             });
         }
         Ok(&self.digests[num as usize])
+    }
+
+    pub fn num_digests(&self) -> u32 {
+        return self.count;
     }
 }
 
@@ -80,9 +87,7 @@ impl inout::Tpm2StructIn for TpmsPcrSelection {
             _ => (),
         }
 
-        println!("size of select if {:?}", self.sizeof_select);
         self.pcr_select = buff.read_bytes(self.sizeof_select as usize);
-        println!("pcr_select is {:?}", self.pcr_select);
         Ok(())
     }
 }
@@ -128,7 +133,6 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
             Err(err) => return Err(err),
             _ => (),
         }
-        println!("count is {:?}", self.count);
         for _pcr_count in 0..self.count {
             let mut pcr_selection: TpmsPcrSelection = Default::default();
             match pcr_selection.unpack(buff) {
