@@ -9,9 +9,15 @@ pub type TpmiStCommandTag = u16;
 pub type TpmCc = u32;
 pub type TpmRc = u32;
 pub type TpmAlgId = u16;
+pub type TpmSu = u16;
 
 // TPM2 command codes
 pub const TPM_CC_PCR_READ: TpmCc = 0x0000017E;
+pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
+
+// TPM2 startup types
+pub const TPM_SU_CLEAR: TpmSu = 0x0000;
+pub const TPM_SU_STATE: TpmSu = 0x0001;
 
 // Command tags
 pub const TPM_ST_NO_SESSION: TpmiStCommandTag = 0x8001;
