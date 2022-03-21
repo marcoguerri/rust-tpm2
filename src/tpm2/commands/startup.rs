@@ -7,7 +7,6 @@ use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::Tpm2StructIn;
 use crate::tpm2::types::tcg;
-use bytebuffer::ByteBuffer;
 use std::mem;
 use std::result;
 
@@ -38,20 +37,19 @@ impl StartupCommand {
 }
 
 impl inout::Tpm2StructOut for StartupCommand {
-    fn pack(&self, buff: &mut ByteBuffer) {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.header.pack(buff);
         self.startup_type.pack(buff);
     }
 }
 
 // TPM2_Startup response
-#[derive(Default, Debug)]
 pub struct StartupResponse {
     header: ResponseHeader,
 }
 
 impl inout::Tpm2StructIn for StartupResponse {
-    fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
         match self.header.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
@@ -62,8 +60,10 @@ impl inout::Tpm2StructIn for StartupResponse {
 
 impl StartupResponse {
     // new builds a StartupResponse structure from a a bytes buffer
-    pub fn new(buff: &mut ByteBuffer) -> result::Result<Self, errors::TpmError> {
-        let mut resp: StartupResponse = Default::default();
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+        let mut resp = StartupResponse {
+            header: ResponseHeader::new(),
+        };
         let unpack_result = resp.unpack(buff);
         match unpack_result {
             Ok(_) => Ok(resp),
@@ -82,11 +82,11 @@ pub fn tpm2_startup(startup_type: tcg::TpmSu) -> result::Result<(), errors::TpmE
         Err(error) => return Err(error),
     };
 
-    let mut buffer = ByteBuffer::new();
+    let mut buffer = inout::StaticByteBuffer::new();
     inout::pack(&[cmd_startup], &mut buffer);
 
-    let mut resp_buffer = ByteBuffer::new();
-    match tpm_device.send_recv(&buffer, &mut resp_buffer) {
+    let mut resp_buffer = inout::StaticByteBuffer::new();
+    match tpm_device.send_recv(&mut buffer, &mut resp_buffer) {
         Err(err) => {
             return Err(errors::TpmError {
                 msg: err.to_string(),
@@ -94,9 +94,5 @@ pub fn tpm2_startup(startup_type: tcg::TpmSu) -> result::Result<(), errors::TpmE
         }
         _ => (),
     }
-    let resp = StartupResponse::new(&mut resp_buffer);
-    match resp {
-        _ => Ok(()),
-        Err(error) => Err(error),
-    }
+    Ok(())
 }

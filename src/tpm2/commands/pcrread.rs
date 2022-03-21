@@ -8,10 +8,10 @@ use crate::tpm2::commands::pcrs::PCRs;
 use crate::tpm2::commands::pcrs::MAX_PCR;
 use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
+use crate::tpm2::serialization::inout::RwBytes;
 use crate::tpm2::serialization::inout::Tpm2StructIn;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
 use crate::tpm2::types::tcg;
-use bytebuffer::ByteBuffer;
 use std::mem;
 use std::result;
 
@@ -22,19 +22,22 @@ pub struct PcrReadCommand {
 }
 
 impl PcrReadCommand {
-    // new creates a new PcrReadCommand object based on tag and pcr selection
+    // new creates a new PcrReadCommand object based on tag and
+    // TPML_PCR_SELECTION structure
     pub fn new(
         tag: tcg::TpmiStCommandTag,
         pcr_selection: tcg::TpmlPcrSelection,
     ) -> result::Result<Self, errors::TpmError> {
-        let mut buffer_pcr_selection = ByteBuffer::new();
-        pcr_selection.pack(&mut buffer_pcr_selection);
-        let pcr_selection_size = buffer_pcr_selection.to_bytes().len();
+        let mut buff = inout::StaticByteBuffer::new();
+        pcr_selection.pack(&mut buff);
+        let pcr_selection_size = buff.to_bytes().len();
 
         if pcr_selection_size > u32::MAX as usize {
-            errors::TpmError {
-                msg: String::from("pcr_selection size is too big"),
-            };
+            errors::TpmError::Generic(format!(
+                "pcr_selection size ({})is too big (max: {})",
+                pcr_selection_size,
+                u32::MAX,
+            ));
         }
 
         Ok(PcrReadCommand {
@@ -52,14 +55,13 @@ impl PcrReadCommand {
 }
 
 impl inout::Tpm2StructOut for PcrReadCommand {
-    fn pack(&self, buff: &mut ByteBuffer) {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.header.pack(buff);
         self.pcr_selection_in.pack(buff);
     }
 }
 
 // TPM2_PCR_Read response
-#[derive(Default, Debug)]
 pub struct PcrReadResponse {
     header: ResponseHeader,
     pcr_update_counter: u32,
@@ -68,7 +70,7 @@ pub struct PcrReadResponse {
 }
 
 impl inout::Tpm2StructIn for PcrReadResponse {
-    fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
         match self.header.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
@@ -93,8 +95,13 @@ impl inout::Tpm2StructIn for PcrReadResponse {
 
 impl PcrReadResponse {
     // new builds a PcrReadResponse structure from a a bytes buffer
-    pub fn new(buff: &mut ByteBuffer) -> result::Result<Self, errors::TpmError> {
-        let mut resp: PcrReadResponse = Default::default();
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+        let mut resp = PcrReadResponse {
+            header: ResponseHeader::new(),
+            pcr_update_counter: 0,
+            pcr_selection_in: tcg::TpmlPcrSelection::new(),
+            pcr_values: tcg::TpmlDigest::new(),
+        };
         let unpack_result = resp.unpack(buff);
         match unpack_result {
             Ok(_) => Ok(resp),
@@ -149,7 +156,7 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
     let mut all_pcrs: PCRs = PCRs::new();
 
     for pcr_selection in selection {
-        let mut pcr_map = vec![0x00, 0x00, 0x00];
+        let mut pcr_map = [0x00, 0x00, 0x00];
         let mut pcr_count = 0;
 
         for (index, pcr) in pcr_selection.get_pcrs().iter().enumerate() {
@@ -169,14 +176,16 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
             // issue the command if we reached the maximum numer of PCRs
             // per TpmlDigest or if we have reeached the end of the
             // pcr_selection data structure
+            let mut pcr_selections = [tcg::TpmsPcrSelection::new(); 16];
+            pcr_selections[0] = tcg::TpmsPcrSelection {
+                hash: pcr_selection.get_algo(),
+                sizeof_select: 3,
+                pcr_select: pcr_map,
+            };
             if pcr_count == 8 || index == pcr_selection.get_pcrs().len() - 1 {
                 let pcr_selection = tcg::TpmlPcrSelection {
                     count: 1,
-                    pcr_selections: vec![tcg::TpmsPcrSelection {
-                        hash: pcr_selection.get_algo(),
-                        sizeof_select: 3,
-                        pcr_select: pcr_map,
-                    }],
+                    pcr_selections: pcr_selections,
                 };
 
                 let cmd_pcr_read = match PcrReadCommand::new(tcg::TPM_ST_NO_SESSION, pcr_selection)
@@ -185,11 +194,11 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
                     Err(error) => return Err(error),
                 };
 
-                let mut buffer = ByteBuffer::new();
+                let mut buffer = inout::StaticByteBuffer::new();
                 inout::pack(&[cmd_pcr_read], &mut buffer);
 
-                let mut resp_buffer = ByteBuffer::new();
-                match tpm_device.send_recv(&buffer, &mut resp_buffer) {
+                let mut resp_buffer = inout::StaticByteBuffer::new();
+                match tpm_device.send_recv(&mut buffer, &mut resp_buffer) {
                     Err(err) => {
                         return Err(errors::TpmError {
                             msg: err.to_string(),
@@ -206,7 +215,7 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
                     Err(err) => return Err(err),
                 };
 
-                pcr_map = vec![0x00, 0x00, 0x00];
+                pcr_map = [0x00, 0x00, 0x00];
                 pcr_count = 0;
             }
         }

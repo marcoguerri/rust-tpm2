@@ -1,4 +1,4 @@
-use bytebuffer::ByteBuffer;
+use crate::tpm2::serialization::inout;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
@@ -81,16 +81,16 @@ pub struct TpmDevice<'a> {
 pub trait TpmDeviceOps {
     fn send_recv(
         &mut self,
-        buff_command: &ByteBuffer,
-        buff_answer: &mut ByteBuffer,
+        buff_command: &mut dyn inout::RwBytes,
+        buff_answer: &mut dyn inout::RwBytes,
     ) -> io::Result<()>;
 }
 
 impl TpmDeviceOps for TpmDevice<'_> {
     fn send_recv(
         &mut self,
-        buff_command: &ByteBuffer,
-        buff_answer: &mut ByteBuffer,
+        buff_command: &mut dyn inout::RwBytes,
+        buff_answer: &mut dyn inout::RwBytes,
     ) -> io::Result<()> {
         // send output buffer and read answer back
         match self.rw.write(&buff_command.to_bytes()) {

@@ -1,6 +1,4 @@
 use crate::tpm2::errors;
-use bytebuffer::ByteBuffer;
-use std::convert::TryInto;
 use std::mem;
 use std::result;
 
@@ -31,7 +29,10 @@ pub type TpmiRsaKeyBits = TpmKeyBits;
 pub const TPM_CC_PCR_READ: TpmCc = 0x0000017E;
 pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
 
+pub const TPM2_NUM_PCR_BANKS: usize = 16;
+pub const TPM2_MAX_PCRS: usize = 24;
 pub const HASH_SIZE: usize = 512;
+pub const TPM2_PCR_SELECT_MAX: usize = (TPM2_MAX_PCRS + 7) / 8;
 
 // TPM2 startup types
 pub const TPM_SU_CLEAR: TpmSu = 0x0000;
@@ -64,34 +65,41 @@ pub struct Tpm2bDigest {
 }
 
 impl Tpm2bDigest {
+    pub fn new() -> Self {
+        Tpm2bDigest {
+            size: 0,
+            buffer: [0; mem::size_of::<TpmuHa>()],
+        }
+    }
     pub fn get_buffer(&self) -> &[u8] {
         &self.buffer[..]
     }
 
-    pub fn from_vec(size: u16, buffer: Vec<u8>) -> Self {
+    pub fn from_vec(size: u16, buffer: &[u8]) -> Self {
+        let mut digest_buffer = [0; mem::size_of::<TpmuHa>()];
+        digest_buffer.clone_from_slice(buffer);
         return Tpm2bDigest {
             size: size,
-            buffer: buffer.try_into().unwrap_or_else(|v: Vec<u8>| {
-                panic!(
-                    "lenght of array is {}, incoming buffer is {}",
-                    mem::size_of::<TpmuHa>(),
-                    v.len()
-                )
-            }),
+            buffer: digest_buffer,
         };
     }
 }
 
 // TPML_DIGEST
-#[derive(Default, Debug)]
 pub struct TpmlDigest {
     count: u32,
     // digests can contain at most 8 entries. From TPM 2.0 Spec, Structures,
     // TPML_DIGEST is defined as digests[count]{:8}
-    digests: Vec<Tpm2bDigest>,
+    digests: [Tpm2bDigest; 8],
 }
 
 impl TpmlDigest {
+    pub fn new() -> Self {
+        TpmlDigest {
+            count: 0,
+            digests: [Tpm2bDigest::new(); 8],
+        }
+    }
     pub fn get_digest(&self, num: u32) -> result::Result<&Tpm2bDigest, errors::TpmError> {
         if num >= self.count {
             return Err(errors::TpmError {
@@ -110,23 +118,33 @@ impl TpmlDigest {
 }
 
 // TPMS_PCR_SELECTION
-#[derive(Default, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct TpmsPcrSelection {
     pub hash: TpmAlgId,
     pub sizeof_select: u8,
-    pub pcr_select: Vec<u8>,
+    pub pcr_select: [u8; TPM2_PCR_SELECT_MAX],
+}
+
+impl TpmsPcrSelection {
+    pub fn new() -> Self {
+        TpmsPcrSelection {
+            hash: 0,
+            sizeof_select: 0,
+            pcr_select: [0; TPM2_PCR_SELECT_MAX],
+        }
+    }
 }
 
 impl inout::Tpm2StructOut for TpmsPcrSelection {
-    fn pack(&self, buff: &mut ByteBuffer) {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.hash.pack(buff);
         self.sizeof_select.pack(buff);
-        buff.write_bytes(self.pcr_select.as_slice());
+        buff.write_bytes(&self.pcr_select);
     }
 }
 
 impl inout::Tpm2StructIn for TpmsPcrSelection {
-    fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
         match self.hash.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
@@ -136,13 +154,14 @@ impl inout::Tpm2StructIn for TpmsPcrSelection {
             _ => (),
         }
 
-        self.pcr_select = buff.read_bytes(self.sizeof_select as usize);
+        self.pcr_select
+            .clone_from_slice(buff.read_bytes(self.sizeof_select as usize));
         Ok(())
     }
 }
 
 impl inout::Tpm2StructIn for TpmlDigest {
-    fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
         match self.count.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
@@ -154,7 +173,7 @@ impl inout::Tpm2StructIn for TpmlDigest {
                 _ => (),
             }
             let buffer = buff.read_bytes(size as usize);
-            self.digests.push(Tpm2bDigest::from_vec(size, buffer));
+            self.digests[_pcr_count as usize] = Tpm2bDigest::from_vec(size, buffer);
         }
         Ok(())
     }
@@ -164,11 +183,20 @@ impl inout::Tpm2StructIn for TpmlDigest {
 #[derive(Default, Debug)]
 pub struct TpmlPcrSelection {
     pub count: u32,
-    pub pcr_selections: Vec<TpmsPcrSelection>,
+    pub pcr_selections: [TpmsPcrSelection; TPM2_NUM_PCR_BANKS],
+}
+
+impl TpmlPcrSelection {
+    pub fn new() -> Self {
+        TpmlPcrSelection {
+            count: 0,
+            pcr_selections: [TpmsPcrSelection::new(); TPM2_NUM_PCR_BANKS],
+        }
+    }
 }
 
 impl inout::Tpm2StructOut for TpmlPcrSelection {
-    fn pack(&self, buff: &mut ByteBuffer) {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.count.pack(buff);
         for pcr_selection in self.pcr_selections.iter() {
             pcr_selection.pack(buff);
@@ -177,7 +205,7 @@ impl inout::Tpm2StructOut for TpmlPcrSelection {
 }
 
 impl inout::Tpm2StructIn for TpmlPcrSelection {
-    fn unpack(&mut self, buff: &mut ByteBuffer) -> result::Result<(), errors::TpmError> {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
         match self.count.unpack(buff) {
             Err(err) => return Err(err),
             _ => (),
@@ -187,7 +215,7 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
             match pcr_selection.unpack(buff) {
                 Err(err) => return Err(err),
                 _ => {
-                    self.pcr_selections.push(pcr_selection);
+                    self.pcr_selections[_pcr_count as usize] = pcr_selection;
                 }
             }
         }
@@ -199,12 +227,12 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
 // TPMU_PUBLIC_PARMS
 #[derive(Copy, Clone)]
 pub union TpmuPublicParms {
-    pub pubkeyedHashDetails: TpmsKeyedHashParms,
+    pub pubkeyed_hash_details: TpmsKeyedHashParms,
 }
 
 // TPMU_PUBLIC_ID
 pub union TpmuPublicId {
-    pub keyedHash: Tpm2bDigest,
+    pub keyed_hash: Tpm2bDigest,
     pub sym: Tpm2bDigest,
     pub rsa: Tpm2bPublicKeyRsa,
     pub ecc: TpmsEccPoint,
@@ -214,7 +242,7 @@ pub union TpmuPublicId {
 // TPMS_SCHEME_HASH
 #[derive(Default, Copy, Clone, Debug)]
 pub struct TpmsSchemeHash {
-    hashAlg: TpmiAlgHash,
+    hash_alg: TpmiAlgHash,
 }
 
 pub type TpmsSchemeHmac = TpmsSchemeHash;
@@ -247,7 +275,7 @@ pub union TpmuAsymScheme {
 // TPMS_SCHEME_XOR
 #[derive(Copy, Clone, Debug)]
 pub struct TpmsSchemeXor {
-    hashAlg: TpmiAlgHash,
+    hash_alg: TpmiAlgHash,
     kdf: TpmiAlgKdf,
 }
 
@@ -287,7 +315,7 @@ pub struct TpmsAsymParms {}
 #[derive(Default, Debug)]
 pub struct TpmtSymDefObject {
     //algorithm: TPMI_ALG_SYM_OBJECT,
-//keyBits: TPMU_SYM_KEY_BITS,
+//key_bits: TPMU_SYM_KEY_BITS,
 //mode: TPMU_SYM_MODE,
 //details: TPMU_SYM_DETAILS,
 }
@@ -299,11 +327,10 @@ pub struct TpmtRsaScheme {
 }
 
 // TPMS_RSA_PARMS
-#[derive(Debug)]
 pub struct TpmsRsaParams {
     symmetric: TpmtSymDefObject,
     scheme: TpmtRsaScheme,
-    keyBits: TpmiRsaKeyBits,
+    key_bits: TpmiRsaKeyBits,
     exponent: u32,
 }
 
@@ -352,18 +379,16 @@ pub struct TpmsDerive {
 }
 
 // TPMT_PUBLIC
-#[derive(Default, Debug)]
 pub struct TpmtPublic {
-    typeAlg: TpmiAlgPublic,
-    nameAlg: TpmiAlgHash,
-    objectAttributes: TpmaObject,
-    authPolicy: Tpm2bDigest,
+    type_alg: TpmiAlgPublic,
+    name_alg: TpmiAlgHash,
+    object_attributes: TpmaObject,
+    auth_policy: Tpm2bDigest,
     parameters: TpmuPublicParms,
     unique: TpmuPublicId,
 }
 
 // TPM2B_PUBLIC
-#[derive(Default, Debug)]
 pub struct Tpm2BPublic {
     size: u16,
     public: TpmtPublic,
