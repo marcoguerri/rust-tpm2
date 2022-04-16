@@ -3,6 +3,8 @@ use std::mem;
 use std::result;
 
 use crate::tpm2::serialization::inout;
+use rsa;
+use rsa::PublicKeyParts;
 
 // Types
 pub type TpmiStCommandTag = u16;
@@ -20,6 +22,8 @@ pub type TpmiAlgPublic = TpmAlgId;
 pub type TpmiAlgHash = TpmAlgId;
 pub type TpmiAlgKdf = TpmAlgId;
 pub type TpmiAlgRsaScheme = TpmAlgId;
+pub type TpmiAlgSymObject = TpmAlgId;
+pub type TpmiAlgSymMode = TpmAlgId;
 
 pub type TpmiAlgKeyedHashScheme = TpmAlgId;
 
@@ -32,6 +36,7 @@ pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
 pub const TPM2_NUM_PCR_BANKS: usize = 16;
 pub const TPM2_MAX_PCRS: usize = 24;
 pub const HASH_SIZE: usize = 512;
+pub const MAX_RSA_SIZE: usize = 512;
 pub const TPM2_PCR_SELECT_MAX: usize = (TPM2_MAX_PCRS + 7) / 8;
 
 // TPM2 startup types
@@ -46,7 +51,10 @@ pub const TPM_ALG_SHA256: TpmAlgId = 0x000B;
 pub const TPM_ALG_KEYEDHASH: TpmAlgId = 0x0008;
 pub const TPM_ALG_SYMCIPHER: TpmAlgId = 0x0025;
 pub const TPM_ALG_RSA: TpmAlgId = 0x0001;
+pub const TPM_ALG_RSASSA: TpmAlgId = 0x0014;
 pub const TPM_ALG_ECC: TpmAlgId = 0x0023;
+pub const TPM_ALG_AES: TpmAlgId = 0x0006;
+pub const TPM_ALG_CFB: TpmAlgId = 0x0043;
 
 // TPMU_HA union
 pub union TpmuHa {
@@ -78,10 +86,10 @@ impl Tpm2bDigest {
     pub fn from_vec(size: u16, buffer: &[u8]) -> Self {
         let mut digest_buffer = [0; mem::size_of::<TpmuHa>()];
         digest_buffer.clone_from_slice(buffer);
-        return Tpm2bDigest {
+        Tpm2bDigest {
             size: size,
             buffer: digest_buffer,
-        };
+        }
     }
 }
 
@@ -227,16 +235,45 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
 // TPMU_PUBLIC_PARMS
 #[derive(Copy, Clone)]
 pub union TpmuPublicParms {
-    pub pubkeyed_hash_details: TpmsKeyedHashParms,
+    keyed_hash_detail: TpmsKeyedHashParms,
+    symDetail: TpmsSymcipherParms,
+    rsaDetail: TpmsRsaParams,
+    eccDetail: TpmsEccParms,
+    asymDetail: TpmsAsymParms,
+}
+
+impl TpmuPublicParms {
+    pub fn newRsaPublicParams(key: &rsa::RsaPublicKey) -> Self {
+        TpmuPublicParms {
+            rsaDetail: TpmsRsaParams::newTpmsRsaParams(key),
+        }
+    }
 }
 
 // TPMU_PUBLIC_ID
 pub union TpmuPublicId {
-    pub keyed_hash: Tpm2bDigest,
-    pub sym: Tpm2bDigest,
-    pub rsa: Tpm2bPublicKeyRsa,
-    pub ecc: TpmsEccPoint,
-    pub derive: TpmsDerive,
+    keyed_hash: Tpm2bDigest,
+    sym: Tpm2bDigest,
+    rsa: Tpm2bPublicKeyRsa,
+    ecc: TpmsEccPoint,
+    derive: TpmsDerive,
+}
+
+impl TpmuPublicId {
+    // newRsa creates a new TpmuPublicId for RSA keys
+    pub fn newRsa(key: &rsa::RsaPublicKey) -> Self {
+        let mut modulus = [0; MAX_RSA_SIZE];
+        modulus[0..key.size()].clone_from_slice(key.n().to_bytes_le().as_slice());
+        let id = TpmuPublicId {
+            rsa: Tpm2bPublicKeyRsa {
+                // size of the buffer containing the modulus
+                size: key.size() as u16,
+                // The buffer
+                buffer: modulus,
+            },
+        };
+        id
+    }
 }
 
 // TPMS_SCHEME_HASH
@@ -259,6 +296,7 @@ pub type TpmsSigSchemeRsaes = TpmsSchemeHash;
 pub type TpmsSigSchemeOaep = TpmsSchemeHash;
 
 // Types of TPMU_ASYM_SCHEME
+#[derive(Copy, Clone)]
 pub union TpmuAsymScheme {
     pub ecdsa: TpmsSigSchemeEcdsa,
     pub rsassa: TpmsSigSchemeRsassa,
@@ -270,6 +308,16 @@ pub union TpmuAsymScheme {
     pub ecschnorr: TpmsSigSchemeEcschnorr,
     pub rsaes: TpmsSigSchemeRsaes,
     pub oaep: TpmsSigSchemeOaep,
+}
+
+impl TpmuAsymScheme {
+    pub fn newRsassaTpmuAsymScheme() -> Self {
+        return TpmuAsymScheme {
+            rsassa: TpmsSigSchemeRsassa {
+                hash_alg: TPM_ALG_RSASSA,
+            },
+        };
+    }
 }
 
 // TPMS_SCHEME_XOR
@@ -300,33 +348,56 @@ pub struct TpmsKeyedHashParms {
 }
 
 // TPMS_SYMCIPHER_PARMS
-#[derive(Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsSymcipherParms {}
 
 // TPMS_ECC_PARMS
-#[derive(Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsEccParms {}
 
 // TPMS_ASYM_PARMS
-#[derive(Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsAsymParms {}
 
 // TPMT_SYM_DEF_OBJECT
-#[derive(Default, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TpmtSymDefObject {
-    //algorithm: TPMI_ALG_SYM_OBJECT,
-//key_bits: TPMU_SYM_KEY_BITS,
-//mode: TPMU_SYM_MODE,
-//details: TPMU_SYM_DETAILS,
+    algorithm: TpmiAlgSymObject,
+    key_bits: u16,
+    mode: TpmiAlgSymMode,
+    // details can be omitted if none of the
+    // selectors produces any data
+    // details: TPMU_SYM_DETAILS,
+}
+
+impl TpmtSymDefObject {
+    pub fn newTpmtSymDefObject() -> Self {
+        TpmtSymDefObject {
+            algorithm: TPM_ALG_AES,
+            key_bits: 128,
+            mode: TPM_ALG_CFB,
+        }
+    }
 }
 
 // TPMT_RSA_SCHEME
+#[derive(Copy, Clone)]
 pub struct TpmtRsaScheme {
     scheme: TpmiAlgRsaScheme,
     details: TpmuAsymScheme,
 }
 
+impl TpmtRsaScheme {
+    pub fn newTpmtRsaScheme() -> Self {
+        TpmtRsaScheme {
+            scheme: TPM_ALG_RSA,
+            details: TpmuAsymScheme::newRsassaTpmuAsymScheme(),
+        }
+    }
+}
+
 // TPMS_RSA_PARMS
+#[derive(Copy, Clone)]
 pub struct TpmsRsaParams {
     symmetric: TpmtSymDefObject,
     scheme: TpmtRsaScheme,
@@ -334,20 +405,26 @@ pub struct TpmsRsaParams {
     exponent: u32,
 }
 
+impl TpmsRsaParams {
+    pub fn newTpmsRsaParams(key: &rsa::RsaPublicKey) -> Self {
+        TpmsRsaParams {
+            symmetric: TpmtSymDefObject::newTpmtSymDefObject(),
+            scheme: TpmtRsaScheme::newTpmtRsaScheme(),
+            key_bits: 2048,
+            exponent: 0,
+        }
+    }
+}
+
 // TPMS_ECC_PARMS
 #[derive(Default, Debug)]
-pub struct TpmsEccParams {
-    symmetric: TpmtSymDefObject,
-    //scheme: TPMT_ECC_SCHEME,
-    //curveID: TPMI_ECC_CURVE,
-    //kdf: TPMT_KDF_SCHEME,
-}
+pub struct TpmsEccParams {}
 
 // TPM2B_LABEL
 #[derive(Copy, Clone, Debug)]
 pub struct Tpm2bLabel {
     size: u16,
-    buffer: [u8; 512usize],
+    buffer: [u8; MAX_RSA_SIZE],
 }
 
 // TPM2B_ECC_PARAMETER
@@ -358,10 +435,12 @@ pub struct Tpm2bEccParameter {
 }
 
 // TPM2B_PUBLIC_KEY_RSA
+// This sized buffer holds the largest RSA public key supported by the TPM.
+// Buffer will contain the modulus of the RSA key.
 #[derive(Copy, Clone, Debug)]
 pub struct Tpm2bPublicKeyRsa {
     size: u16,
-    buffer: [u8; 512usize],
+    buffer: [u8; MAX_RSA_SIZE],
 }
 
 // TPMS_ECC_POINT
@@ -388,10 +467,42 @@ pub struct TpmtPublic {
     unique: TpmuPublicId,
 }
 
+pub fn newDefaultEkAttributes() -> TpmaObject {
+    0
+}
+
+pub fn newDefaultEkAuthPolicy() -> Tpm2bDigest {
+    Tpm2bDigest::new()
+}
+
+impl TpmtPublic {
+    // Creates a default TPMT_PUBLIC data structure for RSA keys
+    pub fn newRsa(key: &rsa::RsaPublicKey) -> Self {
+        TpmtPublic {
+            type_alg: TPM_ALG_RSA,
+            name_alg: TPM_ALG_SHA256,
+            object_attributes: newDefaultEkAttributes(),
+            auth_policy: newDefaultEkAuthPolicy(),
+            parameters: TpmuPublicParms::newRsaPublicParams(key),
+            unique: TpmuPublicId::newRsa(key),
+        }
+    }
+}
+
 // TPM2B_PUBLIC
 pub struct Tpm2BPublic {
     size: u16,
     public: TpmtPublic,
+}
+
+impl Tpm2BPublic {
+    pub fn newRsa(key: &rsa::RsaPublicKey) -> Self {
+        let public: TpmtPublic = TpmtPublic::newRsa(key);
+        Tpm2BPublic {
+            size: 0,
+            public: public,
+        }
+    }
 }
 
 // TPM2B_DATA

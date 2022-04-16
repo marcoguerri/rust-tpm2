@@ -37,10 +37,8 @@ impl RwBytes for StaticByteBuffer {
                 self.buf.len(),
             );
         }
-        for el in bytes.iter() {
-            self.buf[self.wrptr] = *el;
-            self.wrptr += 1;
-        }
+        self.buf[self.wrptr..self.wrptr + bytes.len()].clone_from_slice(bytes);
+        self.wrptr += bytes.len();
     }
 
     fn read_bytes(&mut self, size: usize) -> &[u8] {

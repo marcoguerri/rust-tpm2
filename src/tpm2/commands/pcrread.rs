@@ -33,11 +33,14 @@ impl PcrReadCommand {
         let pcr_selection_size = buff.to_bytes().len();
 
         if pcr_selection_size > u32::MAX as usize {
-            errors::TpmError::Generic(format!(
-                "pcr_selection size ({})is too big (max: {})",
-                pcr_selection_size,
-                u32::MAX,
-            ));
+            errors::TpmError {
+                msg: String::from("pcr_selection size is too big"),
+            };
+            //errors::TpmError::Generic(format!(
+            //    "pcr_selection size ({})is too big (max: {})",
+            //    pcr_selection_size,
+            //    u32::MAX,
+            //));
         }
 
         Ok(PcrReadCommand {
