@@ -80,5 +80,11 @@ pub fn tpm2_import() {
         Err(rr) => panic!("pem error"),
     }
     let public_key = public_key_result.unwrap();
-    let public = tcg::Tpm2BPublic::newRsa(&public_key);
+
+    let sensitive: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+    // Create the duplicate (TPM2B_PRIVATE) object
+    let duplicate = tcg::Tpm2bPrivate::new_data_object(&public_key);
+    // Create the objectPublic (TPM2B_PUBLIC) object
+    let public = tcg::Tpm2bPublic::new_data_object(&public_key, &sensitive);
 }
