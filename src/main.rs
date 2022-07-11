@@ -1,5 +1,7 @@
+mod crypto;
 mod device;
 mod tpm2;
+use crate::crypto::crypto::CFBSymAlg;
 use tpm2::commands::import;
 use tpm2::commands::pcrread;
 use tpm2::commands::pcrs::PCRSelection;
@@ -29,4 +31,7 @@ fn main() {
             1
         }
     };
+
+    println!("cfb encryption test");
+    CFBSymAlg();
 }

@@ -3,13 +3,19 @@ use std::mem;
 use std::result;
 
 use crate::tpm2::serialization::inout;
-use sha2::{Digest, Sha256, Sha512};
+use crate::tpm2::serialization::inout::RwBytes;
+use crate::tpm2::serialization::inout::Tpm2StructOut;
+use sha2::{Digest, Sha256};
 
 use num_traits::ToPrimitive;
+use rand::rngs::OsRng;
+
 use rand;
 use rand::Rng;
 
 use rsa;
+use rsa::PaddingScheme;
+use rsa::PublicKey;
 use rsa::PublicKeyParts;
 
 // Types
@@ -40,9 +46,11 @@ pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
 pub const TPM2_NUM_PCR_BANKS: usize = 16;
 pub const TPM2_MAX_PCRS: usize = 24;
 pub const HASH_SIZE: usize = 512;
-pub const MAX_RSA_KEY_BYTES: usize = 512;
+pub const RSA_KEY_NAX_NUM_BYTES: usize = 256;
 pub const TPM2_PCR_SELECT_MAX: usize = (TPM2_MAX_PCRS + 7) / 8;
 pub const MAX_SYM_DATA: usize = 128;
+pub const RSA_KEY_NUM_BYTES: usize = 2048;
+pub const MAX_SEED_LEN: usize = 32;
 
 // TPM2 startup types
 pub const TPM_SU_CLEAR: TpmSu = 0x0000;
@@ -50,6 +58,7 @@ pub const TPM_SU_STATE: TpmSu = 0x0001;
 
 // Command tags
 pub const TPM_ST_NO_SESSION: TpmiStCommandTag = 0x8001;
+pub const TPM_ST_SESSIONS: TpmiStCommandTag = 0x8002;
 
 // Algorithms
 pub const TPM_ALG_NULL: TpmAlgId = 0x0010;
@@ -78,6 +87,13 @@ pub const MAX_HASH_SIZE: usize = mem::size_of::<TpmuHa>();
 pub struct Tpm2bDigest {
     size: u16,
     buffer: [u8; MAX_HASH_SIZE],
+}
+
+impl inout::Tpm2StructOut for Tpm2bDigest {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        buff.write_bytes(&self.buffer[0..self.size as usize]);
+    }
 }
 
 // TPM2B_AUTH is defined as TPM2B_DIGEST
@@ -247,7 +263,7 @@ impl inout::Tpm2StructIn for TpmlPcrSelection {
 #[derive(Copy, Clone)]
 pub union TpmuEncryptedSecret {
     ecc: [u8; mem::size_of::<TpmsEccPoint>()],
-    rsa: [u8; MAX_RSA_KEY_BYTES],
+    rsa: [u8; RSA_KEY_NAX_NUM_BYTES],
     symmetric: [u8; mem::size_of::<Tpm2bDigest>()],
     keyed_hash: [u8; mem::size_of::<Tpm2bDigest>()],
 }
@@ -266,27 +282,35 @@ pub struct Tpm2bPrivate {
     size: u16,
     // buffer is sized based on _PRIVATE data structure, which is defined
     // as follows:
-    // - integrityOuter: TPM2B_DIGEST
-    // - integrityInner: TPM2B_DIGEST
-    // - sensitive: TPM2B_SENSITIVE
+    // * integrityOuter: TPM2B_DIGEST
+    // * integrityInner: TPM2B_DIGEST
+    // * sensitive: TPM2B_SENSITIVE
     buffer: [u8; mem::size_of::<Tpm2bDigest>() * 2 + mem::size_of::<Tpm2bSensitive>()],
 }
 
+pub fn get_name(public: TpmtPublic) -> [u8; 32] {
+    let mut buff = inout::StaticByteBuffer::new();
+    public.pack(&mut buff);
+
+    let mut hasher = Sha256::new();
+    hasher.update(buff.to_bytes());
+
+    let mut name: [u8; 32] = [0; 32];
+    name.clone_from_slice(&hasher.finalize()[..]);
+    return name;
+}
+
 impl Tpm2bPrivate {
-    // new_data_object creates a TPMT_SENSITIVE object
-    // encrypted within a TPM2B_PRIVATE object with parent
-    // object passed as argument
-    // TODO: At the moment this supports only RSA public key,
-    // should be extended to support everything else.
-    // pub fn new_data_object(parent: &rsa::RsaPublicKey, sensitive: &TpmtSensitive) -> Self {
-    // TODO: the correct signature is above
-    pub fn new_data_object(parent: &rsa::RsaPublicKey) -> Self {
-        // Algorithm for creating a TPM2B_PRIVATE structure is the following:
+    // Creates a `duplicate` object of type TPM2B_PRIVATE
+    pub fn new_duplicate(
+        parent: &rsa::RsaPublicKey,
+        sensitive: TpmtSensitive,
+        public: TpmtPublic,
+    ) -> Self {
+        // Algorithm for creating a `duplicate` TPM2B_PRIVATE structure is the following:
         // * Create seed for symmetric encryption of sensitive
         // * Encrypt seed with parent object
         // * Create duplicate object
-        //
-        // create RSA seed
         //
         // The method of generating the key and IV is described in “Protected Storage”
         // subclause “Symmetric Encryption.” in TPM 2.0 Part 1.
@@ -299,9 +323,39 @@ impl Tpm2bPrivate {
         // The symmetric key for the encryption is computed by:
         // symKey ≔ KDFa (pNameAlg, seedValue, “STORAGE”, name, NULL , bits)
         //
-        // Pag. 145 summarizes all encryption steps
-        //
-        // TODO: encode the sensitive area
+
+        // Create serialized TPM2B_SENSITIVE from TpmtSensitive. Serialize first
+        let mut bytes = inout::StaticByteBuffer::new();
+
+        sensitive.pack(&mut bytes);
+
+        let tpm2b_sensitive = Tpm2bSensitive {
+            size: bytes.to_bytes().len() as u16,
+            sensitive_area: sensitive,
+        };
+
+        // Create seed and encrypted seed
+        let key_bytes = parent.n().to_bytes_le().len();
+        let seed = rand::thread_rng().gen::<[u8; MAX_SEED_LEN]>();
+
+        //let padding = PaddingScheme::new_oaep_with_label::<Sha256, _>("DUPLICATE\x00");
+        //let encrypted_data = parent.encrypt(&mut OsRng, padding, &seed).unwrap();
+
+        // Encrypt the sensitive content with a key obtained from KDFa given
+        // the generated seed
+
+        // Encrypt the sensitive content with the generated seed. The algorithm is as follows:
+        // * Obtain the name of the key
+        // * Encrypt the sensitive area with the seed
+        // * Calculate HMAC
+
+        let mut bytes = inout::StaticByteBuffer::new();
+        sensitive.pack(&mut bytes);
+
+        let tpm2b_sensitive = Tpm2bSensitive {
+            size: bytes.to_bytes().len() as u16,
+            sensitive_area: sensitive,
+        };
         Tpm2bPrivate {
             size: 0,
             buffer: [0; mem::size_of::<Tpm2bDigest>() * 2 + mem::size_of::<Tpm2bSensitive>()],
@@ -323,10 +377,29 @@ pub struct Tpm2bSensitiveData {
     buffer: [u8; MAX_SYM_DATA],
 }
 
+impl inout::Tpm2StructOut for Tpm2bSensitiveData {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        buff.write_bytes(&self.buffer[0..self.size as usize]);
+    }
+}
+
 #[derive(Copy, Clone)]
-// TPMU_SENSITIVE_COMPOSITE
-pub union TpmuSensitiveComposite {
-    bits: Tpm2bSensitiveData,
+enum TpmuSensitiveComposite {
+    Rsa(Tpm2bPublicKeyRsa),
+    Ecc(Tpm2bEccParameter),
+    Bits(Tpm2bSensitiveData),
+}
+
+impl inout::Tpm2StructOut for TpmuSensitiveComposite {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        match *self {
+            TpmuSensitiveComposite::Bits(value) => value.pack(buff),
+            other => {
+                panic!("cannot serialize TpmuSensitiveComposite")
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -339,19 +412,17 @@ pub struct TpmtSensitive {
 }
 
 impl TpmtSensitive {
-    // new_sensitive_data_object creates a TPMT_SENSITIVE
-    // object which holds sensitive data to be encrypted
-    // within an TPM2B_PRIVATE structure
-    pub fn new_sensitive_data_object(data: &[u8]) -> Self {
+    // new_sensitive_data_object creates a TPMT_SENSITIVE object
+    pub fn new(data: &[u8]) -> Self {
         if data.len() > MAX_SYM_DATA || data.len() > 65536 {
             panic!("data is too large");
         }
         let mut sensitive_buffer = [0; MAX_SYM_DATA];
         sensitive_buffer[0..data.len()].clone_from_slice(data);
 
-        // The seed_value of a TPMT_SENSITIVE object
-        // containing symmetric data object is used to calculate
-        // `unique` within TPMT_PUBLIC as
+        // The seed_value of _SENSITIVE object containing symmetric
+        // data object is used to calculate `unique` in TPMT_PUBLIC as
+        //
         // unique := Hash(seed_value || sensitive)
         let mut seed_buffer: [u8; MAX_HASH_SIZE] = [0; MAX_HASH_SIZE];
 
@@ -363,89 +434,98 @@ impl TpmtSensitive {
         seed_buffer[0..seed_result.len()].clone_from_slice(&seed_result);
 
         TpmtSensitive {
+            // TPM_ALG_KEYEDHASH indicates a symmetric data representing
+            // a sealed data object.
             sensitive_type: TPM_ALG_KEYEDHASH,
-            // leave Auth empty for this sensitive area. TODO: why?
+            // Empty Auth value indicates that there is no auth associated
+            // with this sensitive object
             auth_value: Tpm2bAuth {
                 size: 0,
                 buffer: [0; MAX_HASH_SIZE],
             },
+            // For a symmetric object, seedValue field is used as an
+            // obfuscation value
             seed_value: Tpm2bDigest {
                 size: seed_buffer.len() as u16,
                 buffer: seed_buffer,
             },
-            sensitive: TpmuSensitiveComposite {
-                bits: Tpm2bSensitiveData {
-                    size: sensitive_buffer.len() as u16,
-                    buffer: sensitive_buffer,
-                },
-            },
+            sensitive: TpmuSensitiveComposite::Bits(Tpm2bSensitiveData {
+                size: sensitive_buffer.len() as u16,
+                buffer: sensitive_buffer,
+            }),
         }
     }
 }
 
-// TPMU_PUBLIC_PARMS
-#[derive(Copy, Clone)]
-pub union TpmuPublicParms {
-    keyed_hash_detail: TpmsKeyedHashParms,
-    symDetail: TpmsSymcipherParms,
-    rsaDetail: TpmsRsaParams,
-    eccDetail: TpmsEccParms,
-    asymDetail: TpmsAsymParms,
-}
-
-impl TpmuPublicParms {
-    pub fn new_rsa_public_params(key: &rsa::RsaPublicKey) -> Self {
-        TpmuPublicParms {
-            rsaDetail: TpmsRsaParams::new_tpms_rsa_params(key),
-        }
-    }
-
-    pub fn new_keyed_hash_parms() -> Self {
-        TpmuPublicParms {
-            keyed_hash_detail: TpmsKeyedHashParms::new_keyed_hash_parms(),
-        }
+impl inout::Tpm2StructOut for TpmtSensitive {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.sensitive_type.pack(buff);
+        self.auth_value.pack(buff);
+        self.seed_value.pack(buff);
+        self.sensitive.pack(buff);
     }
 }
 
 // TPMU_PUBLIC_ID
-pub union TpmuPublicId {
-    keyed_hash: Tpm2bDigest,
-    sym: Tpm2bDigest,
-    rsa: Tpm2bPublicKeyRsa,
-    ecc: TpmsEccPoint,
-    derive: TpmsDerive,
+#[derive(Copy, Clone)]
+enum TpmuPublicId {
+    KeyedHash(Tpm2bDigest),
+    Sym(Tpm2bDigest),
+    Rsa(Tpm2bPublicKeyRsa),
+    Ecc(TpmsEccPoint),
+    Derive(TpmsDerive),
+}
+
+impl inout::Tpm2StructOut for TpmuPublicId {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        match *self {
+            TpmuPublicId::KeyedHash(value) => {
+                value.pack(buff);
+            }
+            TpmuPublicId::Rsa(value) => {
+                value.pack(buff);
+            }
+            other => {
+                panic!("cannot serialize TpmuPublicId");
+            }
+        }
+    }
 }
 
 impl TpmuPublicId {
     // new_rsa creates a new TpmuPublicId for RSA keys
     pub fn new_rsa(key: &rsa::RsaPublicKey) -> Self {
-        let mut modulus = [0; MAX_RSA_KEY_BYTES];
+        let mut modulus = [0; RSA_KEY_NAX_NUM_BYTES];
         modulus[0..key.size()].clone_from_slice(key.n().to_bytes_le().as_slice());
-        let id = TpmuPublicId {
-            rsa: Tpm2bPublicKeyRsa {
-                // size of the buffer containing the modulus
-                size: key.size() as u16,
-                // The buffer
-                buffer: modulus,
-            },
-        };
+        let id = TpmuPublicId::Rsa(Tpm2bPublicKeyRsa {
+            // size of the buffer containing the modulus
+            size: key.size() as u16,
+            // The buffer
+            buffer: modulus,
+        });
         id
     }
 
-    pub fn new_keyed_hash() -> Self {
-        TpmuPublicId {
-            keyed_hash: Tpm2bDigest {
-                size: 0,
-                buffer: [0; MAX_HASH_SIZE],
-            },
-        }
+    pub fn new_keyed_hash(data: &[u8]) -> Self {
+        let mut buffer = [0; MAX_HASH_SIZE];
+        buffer[0..data.len()].clone_from_slice(data);
+        TpmuPublicId::KeyedHash(Tpm2bDigest {
+            size: data.len() as u16,
+            buffer: buffer,
+        })
     }
 }
 
 // TPMS_SCHEME_HASH
-#[derive(Default, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsSchemeHash {
     hash_alg: TpmiAlgHash,
+}
+
+impl inout::Tpm2StructOut for TpmsSchemeHash {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.hash_alg.pack(buff);
+    }
 }
 
 pub type TpmsSchemeHmac = TpmsSchemeHash;
@@ -487,39 +567,67 @@ impl TpmuAsymScheme {
 }
 
 // TPMS_SCHEME_XOR
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct TpmsSchemeXor {
     hash_alg: TpmiAlgHash,
     kdf: TpmiAlgKdf,
 }
 
 // TPMU_SCHEME_KEYEDHASH
-#[derive(Copy, Clone, Debug)]
-pub struct TpmuSchemeKeyedHash {
-    hmac: TpmsSchemeHmac,
-    xor: TpmsSchemeXor,
+#[derive(Copy, Clone)]
+enum TpmuSchemeKeyedHash {
+    Hmac(TpmsSchemeHmac),
+    Xor(TpmsSchemeXor),
+    Null,
+}
+
+impl inout::Tpm2StructOut for TpmuSchemeKeyedHash {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        match *self {
+            TpmuSchemeKeyedHash::Hmac(value) => {
+                value.pack(buff);
+            }
+            other => {
+                panic!("cannot serialize TpmuSchemeKeyedHash");
+            }
+        }
+    }
 }
 
 // TPMT_KEYEDHASH_SCHEME
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct TpmtKeyedHashScheme {
     scheme: TpmiAlgKeyedHashScheme,
-    details: Option<TpmuSchemeKeyedHash>,
+    details: TpmuSchemeKeyedHash,
+}
+
+impl inout::Tpm2StructOut for TpmtKeyedHashScheme {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.scheme.pack(buff);
+        self.details.pack(buff);
+    }
 }
 
 impl TpmtKeyedHashScheme {
     pub fn new_keyed_hash_scheme() -> Self {
         TpmtKeyedHashScheme {
             scheme: TPM_ALG_NULL,
-            details: None,
+            // default `details` value, not relevant if scheme == TPM_ALG_NULL
+            details: TpmuSchemeKeyedHash::Null,
         }
     }
 }
 
 // TPMS_KEYEDHASH_PARMS
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct TpmsKeyedHashParms {
     scheme: TpmtKeyedHashScheme,
+}
+
+impl inout::Tpm2StructOut for TpmsKeyedHashParms {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.scheme.pack(buff);
+    }
 }
 
 impl TpmsKeyedHashParms {
@@ -596,13 +704,13 @@ impl TpmsRsaParams {
             None => panic!("exponent cannot be represented with 32 bytes"),
         }
         let key_len = key.n().to_bytes_le().len();
-        if key_len != 256 {
+        if key_len != RSA_KEY_NUM_BYTES / 8 {
             panic!("only 2048 bits key supported, got {}", key_len);
         }
         TpmsRsaParams {
             symmetric: TpmtSymDefObject::new_tpmt_sym_def_object(),
             scheme: TpmtRsaScheme::new_tpmt_rsa_scheme(),
-            key_bits: 2048,
+            key_bits: (key_len * 8) as u16,
             exponent: exp_result.unwrap(),
         }
     }
@@ -616,7 +724,7 @@ pub struct TpmsEccParams {}
 #[derive(Copy, Clone, Debug)]
 pub struct Tpm2bLabel {
     size: u16,
-    buffer: [u8; MAX_RSA_KEY_BYTES],
+    buffer: [u8; RSA_KEY_NAX_NUM_BYTES],
 }
 
 // TPM2B_ECC_PARAMETER
@@ -632,24 +740,64 @@ pub struct Tpm2bEccParameter {
 #[derive(Copy, Clone, Debug)]
 pub struct Tpm2bPublicKeyRsa {
     size: u16,
-    buffer: [u8; MAX_RSA_KEY_BYTES],
+    buffer: [u8; RSA_KEY_NAX_NUM_BYTES],
+}
+
+impl inout::Tpm2StructOut for Tpm2bPublicKeyRsa {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        buff.write_bytes(&self.buffer[0..self.size as usize]);
+    }
 }
 
 // TPMS_ECC_POINT
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct TpmsEccPoint {
     x: Tpm2bEccParameter,
     y: Tpm2bEccParameter,
 }
 
 // TPMS_DERIVE
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct TpmsDerive {
     label: Tpm2bLabel,
     //context: Tpm2bContext,
 }
 
+#[derive(Copy, Clone)]
+enum TpmuPublicParms {
+    KeyedHashDetail(TpmsKeyedHashParms),
+    SymDetail(TpmsSymcipherParms),
+    RsaDetail(TpmsRsaParams),
+    EccDetail(TpmsEccParms),
+    AsymDetail(TpmsAsymParms),
+}
+
+impl TpmuPublicParms {
+    pub fn new_rsa_public_params(key: &rsa::RsaPublicKey) -> Self {
+        return TpmuPublicParms::RsaDetail(TpmsRsaParams::new_tpms_rsa_params(key));
+    }
+
+    pub fn new_keyed_hash_parms() -> Self {
+        return TpmuPublicParms::KeyedHashDetail(TpmsKeyedHashParms::new_keyed_hash_parms());
+    }
+}
+
+impl inout::Tpm2StructOut for TpmuPublicParms {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        match *self {
+            TpmuPublicParms::KeyedHashDetail(params) => {
+                params.pack(buff);
+            }
+            other => {
+                panic!("cannot serialize KeyedHashDetail");
+            }
+        }
+    }
+}
+
 // TPMT_PUBLIC
+#[derive(Copy, Clone)]
 pub struct TpmtPublic {
     type_alg: TpmiAlgPublic,
     name_alg: TpmiAlgHash,
@@ -667,6 +815,17 @@ pub fn newDefaultEkAuthPolicy() -> Tpm2bDigest {
     Tpm2bDigest::new()
 }
 
+impl inout::Tpm2StructOut for TpmtPublic {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.type_alg.pack(buff);
+        self.name_alg.pack(buff);
+        self.object_attributes.pack(buff);
+        self.auth_policy.pack(buff);
+        self.parameters.pack(buff);
+        self.unique.pack(buff);
+    }
+}
+
 impl TpmtPublic {
     // Creates a TPMT_PUBLIC data structure for RSA key (type == TPM_ALG_RSA)
     pub fn new_rsa(key: &rsa::RsaPublicKey) -> Self {
@@ -680,28 +839,42 @@ impl TpmtPublic {
         }
     }
     // Creates a TPMT_PUBLIC data structure for data object (type == TPM_ALG_KEYEDHASH).
+    //
     // With type TPM_ALG_KEYEDHASH, sign and decrypt attributes should be clear.
     //
     // For Data object, the contents of unique should be of type TPM2B_DIGEST
     // and should be computed from components of the sensitive area of the object
     // as follows:
+    //
     // unique := Hash(seedValue || sensitive)
     //
-    // An object description requires a TPM2B_PUBLIC structure and may require a
-    // TPMT_SENSITIVE structure. When the structure is stored off the TPM, the TPMT_SENSITIVE
-    // structure is encrypted within a TPM2B_PRIVATE structure.
-    pub fn new_data_object(sensitive: &[u8]) -> Self {
+    pub fn new_data_object(sensitive: &TpmtSensitive) -> Self {
+        let mut hasher = Sha256::new();
+
+        hasher.update(&sensitive.seed_value.buffer[0..sensitive.seed_value.size as usize]);
+
+        match sensitive.sensitive {
+            TpmuSensitiveComposite::Bits(value) => {
+                hasher.update(&value.buffer[0..value.size as usize]);
+            }
+            other => {
+                panic!("cannot create new data object with this sensitive type");
+            }
+        }
+
+        let unique = hasher.finalize();
+
         TpmtPublic {
             type_alg: TPM_ALG_KEYEDHASH,
             name_alg: TPM_ALG_SHA256,
-            // TODO: handle object attributes
+            // Clear all attributes for Data object
             object_attributes: newDefaultEkAttributes(),
-            // TODO: handle auth policy
+            // Empty auth policy
             auth_policy: newDefaultEkAuthPolicy(),
+            // The TPMT_PUBLIC blob is of type TPM_ALG_KEYEDHASH and holds
+            // a TPMS_KEYEDHASH_PARMS data structure
             parameters: TpmuPublicParms::new_keyed_hash_parms(),
-
-            // TODO: fix unique
-            unique: TpmuPublicId::new_keyed_hash(),
+            unique: TpmuPublicId::new_keyed_hash(&unique),
         }
     }
 }
@@ -724,7 +897,7 @@ impl Tpm2bPublic {
         }
     }
 
-    pub fn new_data_object(parent: &rsa::RsaPublicKey, sensitive: &[u8]) -> Self {
+    pub fn new_public_data_object(parent: &rsa::RsaPublicKey, sensitive: &TpmtSensitive) -> Self {
         Tpm2bPublic {
             size: 0,
             public: TpmtPublic::new_data_object(sensitive),

@@ -81,10 +81,11 @@ pub fn tpm2_import() {
     }
     let public_key = public_key_result.unwrap();
 
-    let sensitive: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    let secret = "animportantsecret";
 
-    // Create the duplicate (TPM2B_PRIVATE) object
-    let duplicate = tcg::Tpm2bPrivate::new_data_object(&public_key);
+    let sensitive = tcg::TpmtSensitive::new(secret.as_bytes());
+    // Create the duplicate (TPM2B_PRIVATE) object based on the sensitive content
+    //    let duplicate = tcg::Tpm2bPrivate::new(&public_key, &sensitive);
     // Create the objectPublic (TPM2B_PUBLIC) object
-    let public = tcg::Tpm2bPublic::new_data_object(&public_key, &sensitive);
+    let public = tcg::Tpm2bPublic::new_public_data_object(&public_key, &sensitive);
 }
