@@ -4,8 +4,16 @@ use std::result;
 
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::RwBytes;
+
+use aes;
+use aes::cipher::{AsyncStreamCipher, KeyIvInit};
+
+use byteorder::{BigEndian, ByteOrder};
+
 use crate::tpm2::serialization::inout::Tpm2StructOut;
 use sha2::{Digest, Sha256};
+
+use hmac::{Hmac, Mac};
 
 use num_traits::ToPrimitive;
 use rand::rngs::OsRng;
@@ -276,6 +284,25 @@ pub struct Tpm2bEncryptedSecret {
     secret: [u8; mem::size_of::<TpmuEncryptedSecret>()],
 }
 
+#[derive(Copy, Clone)]
+pub struct _Private {
+    integrity_outer: Tpm2bDigest,
+    integrity_inner: Tpm2bDigest,
+    size_sensitive: u16,
+    enc_sensitive: [u8; mem::size_of::<Tpm2bSensitive>()],
+}
+
+impl inout::Tpm2StructOut for _Private {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.integrity_outer.pack(buff);
+        if self.integrity_inner.size > 0 {
+            self.integrity_inner.pack(buff);
+        }
+        self.size_sensitive.pack(buff);
+        buff.write_bytes(&self.enc_sensitive[0..self.size_sensitive as usize]);
+    }
+}
+
 // TPM2B_PRIVATE
 #[derive(Copy, Clone)]
 pub struct Tpm2bPrivate {
@@ -284,20 +311,82 @@ pub struct Tpm2bPrivate {
     // as follows:
     // * integrityOuter: TPM2B_DIGEST
     // * integrityInner: TPM2B_DIGEST
-    // * sensitive: TPM2B_SENSITIVE
+    // * se:nsitive: TPM2B_SENSITIVE
     buffer: [u8; mem::size_of::<Tpm2bDigest>() * 2 + mem::size_of::<Tpm2bSensitive>()],
 }
 
-pub fn get_name(public: TpmtPublic) -> [u8; 32] {
+impl inout::Tpm2StructOut for Tpm2bPrivate {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        buff.write_bytes(&self.buffer[0..self.size as usize]);
+    }
+}
+
+pub fn get_name(public: TpmtPublic) -> [u8; 34] {
+    // The name of a TPMT_PUBLIC data structure requires
+    // that the algorithm type os pre-pended
     let mut buff = inout::StaticByteBuffer::new();
     public.pack(&mut buff);
 
     let mut hasher = Sha256::new();
     hasher.update(buff.to_bytes());
 
-    let mut name: [u8; 32] = [0; 32];
-    name.clone_from_slice(&hasher.finalize()[..]);
+    let mut name: [u8; 34] = [0; 34];
+    name[0] = 0x00;
+    name[1] = 0x0b;
+    name[2..].clone_from_slice(&hasher.finalize()[..]);
     return name;
+}
+
+pub fn kdfa(
+    key: &[u8],
+    label: &[u8],
+    contextU: &[u8],
+    contextV: &[u8],
+    bits: u32,
+) -> result::Result<inout::StaticByteBuffer, errors::TpmError> {
+    let bytes = (bits + 7) / 8;
+
+    let mut counter: u32 = 1;
+
+    let mut buff4B = [0; 4];
+
+    // TODO: this should not be hardcoded
+    type HmacSha256 = Hmac<Sha256>;
+
+    let mut buff = inout::StaticByteBuffer::new();
+
+    while buff.to_bytes().len() < bytes as usize {
+        let mut mac = HmacSha256::new_from_slice(key).expect("could not create HMAC");
+
+        BigEndian::write_u32(&mut buff4B, counter);
+        mac.update(&buff4B);
+
+        mac.update(label);
+        mac.update(&[0x0]);
+        mac.update(contextU);
+        mac.update(contextV);
+
+        buff4B.fill(0);
+        BigEndian::write_u32(&mut buff4B, bits);
+        mac.update(&buff4B);
+
+        let result = mac.finalize();
+        buff.write_bytes(&result.into_bytes());
+    }
+
+    let out: &[u8] = &buff.to_bytes()[0..bytes as usize];
+
+    let mut key = inout::StaticByteBuffer::new();
+    let maskBits = bits % 8;
+    if maskBits > 0 {
+        key.write_bytes(&[out[0] & (1 << maskBits) - 1]);
+        key.write_bytes(&out[1..]);
+    } else {
+        key.write_bytes(out);
+    }
+
+    Ok(key)
 }
 
 impl Tpm2bPrivate {
@@ -324,42 +413,167 @@ impl Tpm2bPrivate {
         // symKey ≔ KDFa (pNameAlg, seedValue, “STORAGE”, name, NULL , bits)
         //
 
-        // Create serialized TPM2B_SENSITIVE from TpmtSensitive. Serialize first
-        let mut bytes = inout::StaticByteBuffer::new();
+        // Create serialized TPM2B_SENSITIVE from TpmtSensitive.
+        let mut temp = inout::StaticByteBuffer::new();
+        sensitive.pack(&mut temp);
+        let size = temp.to_bytes().len() as u16;
 
-        sensitive.pack(&mut bytes);
-
-        let tpm2b_sensitive = Tpm2bSensitive {
-            size: bytes.to_bytes().len() as u16,
+        let mut sensitive_buff = inout::StaticByteBuffer::new();
+        Tpm2bSensitive {
+            size: size,
             sensitive_area: sensitive,
-        };
-
-        // Create seed and encrypted seed
-        let key_bytes = parent.n().to_bytes_le().len();
-        let seed = rand::thread_rng().gen::<[u8; MAX_SEED_LEN]>();
-
-        //let padding = PaddingScheme::new_oaep_with_label::<Sha256, _>("DUPLICATE\x00");
-        //let encrypted_data = parent.encrypt(&mut OsRng, padding, &seed).unwrap();
-
-        // Encrypt the sensitive content with a key obtained from KDFa given
-        // the generated seed
-
-        // Encrypt the sensitive content with the generated seed. The algorithm is as follows:
-        // * Obtain the name of the key
-        // * Encrypt the sensitive area with the seed
-        // * Calculate HMAC
-
-        let mut bytes = inout::StaticByteBuffer::new();
-        sensitive.pack(&mut bytes);
-
-        let tpm2b_sensitive = Tpm2bSensitive {
-            size: bytes.to_bytes().len() as u16,
-            sensitive_area: sensitive,
-        };
-        Tpm2bPrivate {
-            size: 0,
-            buffer: [0; mem::size_of::<Tpm2bDigest>() * 2 + mem::size_of::<Tpm2bSensitive>()],
         }
+        .pack(&mut sensitive_buff);
+
+        // Encrypt the serialized TPM2B_SENSITIVE structure
+        // Equivalent to the call:
+        // encryptSecret(packedSecret, seed, nameEncoded, ek)
+        // Where
+        // packedSecret is sensitive_buff
+        let name = get_name(public);
+
+        let mut public_buff = inout::StaticByteBuffer::new();
+
+        public.pack(&mut public_buff);
+
+        println!("public buff is {:02x?}", public_buff.to_bytes());
+
+        // TPM2B_SENSITIVE is given by the concatenation of
+        // `size_buff` and `sensitive_buff`.
+
+        // Create seed and encrypt TPM2B_SENSITIVE
+        //let key_bytes = parent.n().to_bytes_le().len();
+        //let seed = rand::thread_rng().gen::<[u8; MAX_SEED_LEN]>();
+
+        let seed: [u8; 16] = [
+            0x12, 0x39, 0x00, 0x02, 0x67, 0x18, 0x16, 0x50, 0x67, 0x21, 0xf6, 0xfc, 0xe8, 0x80,
+            0xb4, 0xab,
+        ];
+
+        // Encrypt the seed with parent key
+        let mut rng = rand::thread_rng();
+
+        let label = "DUPLICATE";
+
+        let padding = PaddingScheme::new_oaep_with_label::<sha2::Sha256, &str>(label);
+        let enc_seed = parent
+            .encrypt(&mut rng, padding, &seed[..])
+            .expect("failed to encrypt");
+
+        println!("encrypted seed is {:02x?}", enc_seed);
+        println!("");
+        println!("");
+
+        let result = kdfa(&seed[..], "STORAGE".as_bytes(), &name[..], &[], 128);
+
+        let mut key: [u8; 16] = [0; 16];
+
+        match result {
+            Ok(res) => {
+                key.clone_from_slice(res.to_bytes());
+                println!("key is {:x?}", key);
+            }
+            Err(err) => {
+                panic!("error while calculating key");
+            }
+        }
+
+        type Aes128CfbEnc = cfb_mode::Encryptor<aes::Aes128>;
+
+        let iv = [0x00; 16];
+
+        let mut encrypted_buff: [u8; 256] = [0; 256];
+
+        Aes128CfbEnc::new(&key.into(), &iv.into())
+            .encrypt_b2b(
+                &mut sensitive_buff.to_bytes(),
+                &mut encrypted_buff[0..sensitive_buff.to_bytes().len()],
+            )
+            .unwrap();
+
+        println!("Encrypted buffer is {:x?}", encrypted_buff);
+
+        // Creation of HMAC
+        let result = kdfa(&seed[..], "INTEGRITY".as_bytes(), &[], &[], 256);
+        let mut mac_key: [u8; 32] = [0; 32];
+
+        match result {
+            Ok(res) => {
+                mac_key.clone_from_slice(res.to_bytes());
+                println!("key is {:x?}", key);
+            }
+            Err(err) => {
+                panic!("error while calculating key");
+            }
+        }
+
+        println!("MAC key {:x?}", mac_key);
+        // TODO: this should not be hardcoded
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut mac = HmacSha256::new_from_slice(&mac_key[..]).expect("could not create HMAC");
+
+        mac.update(&encrypted_buff[0..sensitive_buff.to_bytes().len()]);
+        mac.update(&name[..]);
+
+        // Create the _PRIVATE data structure consisting of the following
+        // pub struct _Private {
+        //    integrity_outer: Tpm2bDigest,
+        //    integrity_inner: Tpm2bDigest,
+        //    sensitive: Tpm2bSensitive,
+        // }
+        // Since for creation of duplicate IV was all zero, it doesn't need to
+        // be added to _Private, so integrity_inner shall be ignored
+
+        let hmac_result = mac.finalize();
+        let hmac_bytes = hmac_result.into_bytes();
+
+        println!("mac bytes are {:x?}", hmac_bytes);
+
+        let mut buffer: [u8; MAX_HASH_SIZE] = [0; MAX_HASH_SIZE];
+        buffer[0..32].clone_from_slice(&hmac_bytes[..]);
+
+        let mut enc_sensitive: [u8; mem::size_of::<Tpm2bSensitive>()] =
+            [0; mem::size_of::<Tpm2bSensitive>()];
+        enc_sensitive[0..256].clone_from_slice(&encrypted_buff);
+
+        let private = _Private {
+            integrity_outer: Tpm2bDigest {
+                size: hmac_bytes.len() as u16,
+                buffer: buffer,
+            },
+            // Since for creation of duplicate IV was all zero, it doesn't need to
+            // be added to _Private, so integrity_inner shall be ignored
+            integrity_inner: Tpm2bDigest {
+                size: 0,
+                buffer: [0; 64],
+            },
+            size_sensitive: sensitive_buff.to_bytes().len() as u16,
+            enc_sensitive: enc_sensitive,
+        };
+
+        // The import blob then consists in:
+        // * Duplicate
+        // * Encrypted Seed
+        // * Public Area
+        // * PCRA
+
+        let mut private_buff = inout::StaticByteBuffer::new();
+        private.pack(&mut private_buff);
+
+        let mut duplicate = Tpm2bPrivate {
+            size: private_buff.to_bytes().len() as u16,
+            buffer: [0; mem::size_of::<Tpm2bDigest>() * 2 + mem::size_of::<Tpm2bSensitive>()],
+        };
+        duplicate.buffer[0..private_buff.to_bytes().len()]
+            .clone_from_slice(private_buff.to_bytes());
+
+        let mut duplicate_buff = inout::StaticByteBuffer::new();
+
+        duplicate.pack(&mut duplicate_buff);
+        println!("duplicate is {:02x?}", duplicate_buff.to_bytes());
+
+        return duplicate;
     }
 }
 
@@ -368,6 +582,13 @@ impl Tpm2bPrivate {
 pub struct Tpm2bSensitive {
     size: u16,
     sensitive_area: TpmtSensitive,
+}
+
+impl inout::Tpm2StructOut for Tpm2bSensitive {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        self.sensitive_area.pack(buff);
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -424,14 +645,19 @@ impl TpmtSensitive {
         // data object is used to calculate `unique` in TPMT_PUBLIC as
         //
         // unique := Hash(seed_value || sensitive)
-        let mut seed_buffer: [u8; MAX_HASH_SIZE] = [0; MAX_HASH_SIZE];
-
-        let rnd = rand::thread_rng().gen::<[u8; 32]>();
-        let mut hasher = Sha256::new();
-        hasher.update(rnd);
-        let seed_result = hasher.finalize();
-
-        seed_buffer[0..seed_result.len()].clone_from_slice(&seed_result);
+        let mut seed_buffer: [u8; MAX_HASH_SIZE] = [
+            0xb9, 0xfa, 0x57, 0xb8, 0x5c, 0x55, 0xde, 0x9c, 0xf3, 0xb2, 0x06, 0x47, 0x46, 0xf5,
+            0x48, 0x55, 0x1b, 0x7e, 0x35, 0xdf, 0xc5, 0xf2, 0x33, 0x1e, 0x51, 0xe3, 0x06, 0x65,
+            0x74, 0xa4, 0x71, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        // TODO: This doesn't need to be hash or random, just random
+        //let rnd = rand::thread_rng().gen::<[u8; 32]>();
+        //let mut hasher = Sha256::new();
+        //hasher.update(rnd);
+        //let seed_result = hasher.finalize();
+        //seed_buffer[0..seed_result.len()].clone_from_slice(&seed_result);
 
         TpmtSensitive {
             // TPM_ALG_KEYEDHASH indicates a symmetric data representing
@@ -446,11 +672,11 @@ impl TpmtSensitive {
             // For a symmetric object, seedValue field is used as an
             // obfuscation value
             seed_value: Tpm2bDigest {
-                size: seed_buffer.len() as u16,
+                size: 32,
                 buffer: seed_buffer,
             },
             sensitive: TpmuSensitiveComposite::Bits(Tpm2bSensitiveData {
-                size: sensitive_buffer.len() as u16,
+                size: data.len() as u16,
                 buffer: sensitive_buffer,
             }),
         }
@@ -573,6 +799,13 @@ pub struct TpmsSchemeXor {
     kdf: TpmiAlgKdf,
 }
 
+impl inout::Tpm2StructOut for TpmsSchemeXor {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.hash_alg.pack(buff);
+        self.kdf.pack(buff);
+    }
+}
+
 // TPMU_SCHEME_KEYEDHASH
 #[derive(Copy, Clone)]
 enum TpmuSchemeKeyedHash {
@@ -587,9 +820,10 @@ impl inout::Tpm2StructOut for TpmuSchemeKeyedHash {
             TpmuSchemeKeyedHash::Hmac(value) => {
                 value.pack(buff);
             }
-            other => {
-                panic!("cannot serialize TpmuSchemeKeyedHash");
+            TpmuSchemeKeyedHash::Xor(value) => {
+                value.pack(buff);
             }
+            other => {}
         }
     }
 }
@@ -808,7 +1042,8 @@ pub struct TpmtPublic {
 }
 
 pub fn newDefaultEkAttributes() -> TpmaObject {
-    0
+    // This is FlagUserWithAuth in go-tpm implementation
+    0x00000040
 }
 
 pub fn newDefaultEkAuthPolicy() -> Tpm2bDigest {

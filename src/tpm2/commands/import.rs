@@ -81,11 +81,31 @@ pub fn tpm2_import() {
     }
     let public_key = public_key_result.unwrap();
 
-    let secret = "animportantsecret";
+    let secret = "secret data";
 
+    // Create TpmtSensitive, based on the secret provided. This will be used
+    // for the creation of `duplicate`.
     let sensitive = tcg::TpmtSensitive::new(secret.as_bytes());
+
+    // Create the TPMT_PUBLIC from the sensitive object
+    let public = tcg::TpmtPublic::new_data_object(&sensitive);
+
+    tcg::kdfa(
+        &[
+            0xda, 0x82, 0xeb, 0x71, 0xb1, 0x8c, 0xb9, 0xae, 0xfc, 0x9c, 0x88, 0xa5, 0xff, 0x03,
+            0x01, 0x6f, 0x12, 0xd1, 0x74, 0x0b, 0x05, 0x78, 0x21, 0xcd, 0xff, 0x9e, 0xac, 0xba,
+            0xb7, 0xbd, 0xd3, 0xc9,
+        ],
+        "STORAGE".as_bytes(),
+        &[
+            0x00, 0x0b, 0x8c, 0xca, 0x34, 0xd8, 0xb9, 0xf4, 0xae, 0xbe, 0xe7, 0x91, 0xf8, 0xd0,
+            0xa4, 0xdf, 0xcf, 0xc2, 0x2f, 0x20, 0x87, 0xc1, 0xc9, 0xfa, 0x4c, 0x79, 0xb5, 0xa0,
+            0x8b, 0x27, 0xcf, 0x8a, 0xd6, 0x59,
+        ],
+        &[],
+        128,
+    );
+
     // Create the duplicate (TPM2B_PRIVATE) object based on the sensitive content
-    //    let duplicate = tcg::Tpm2bPrivate::new(&public_key, &sensitive);
-    // Create the objectPublic (TPM2B_PUBLIC) object
-    let public = tcg::Tpm2bPublic::new_public_data_object(&public_key, &sensitive);
+    let duplicate = tcg::Tpm2bPrivate::new_duplicate(&public_key, sensitive, public);
 }

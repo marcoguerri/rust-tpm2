@@ -18,7 +18,7 @@ pub trait RwBytes {
     fn read_bytes(&mut self, size: usize) -> &[u8];
     // to_bytes returs a slice representation of the whole
     // buffer
-    fn to_bytes(&mut self) -> &[u8];
+    fn to_bytes(&self) -> &[u8];
 }
 
 // StaticByteBuffer implements a bytes buffer with static allocation
@@ -53,7 +53,7 @@ impl RwBytes for StaticByteBuffer {
         return &self.buf[self.rdptr - size..self.rdptr];
     }
 
-    fn to_bytes(&mut self) -> &[u8] {
+    fn to_bytes(&self) -> &[u8] {
         return &self.buf[0..self.wrptr];
     }
 }
