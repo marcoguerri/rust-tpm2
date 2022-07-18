@@ -33,13 +33,21 @@ pub type TpmRc = u32;
 pub type TpmAlgId = u16;
 pub type TpmSu = u16;
 pub type TpmaObject = u32;
+pub type TpmaSession = u8;
 pub type TpmKeyBits = u16;
+
+pub type Handle = u32;
+
+pub type TpmiShAuthSession = Handle;
+
+pub const TPM_RH_NULL: Handle = 0x40000007;
 
 // Derived types
 pub type TpmiAlgPublic = TpmAlgId;
 pub type TpmiAlgHash = TpmAlgId;
 pub type TpmiAlgKdf = TpmAlgId;
 pub type TpmiAlgRsaScheme = TpmAlgId;
+pub type TpmiAlgSym = TpmAlgId;
 pub type TpmiAlgSymObject = TpmAlgId;
 pub type TpmiAlgSymMode = TpmAlgId;
 
@@ -47,9 +55,16 @@ pub type TpmiAlgKeyedHashScheme = TpmAlgId;
 
 pub type TpmiRsaKeyBits = TpmKeyBits;
 
+pub type TpmSe = u8;
+
+pub const TPM_SE_HMAC: TpmSe = 0x00;
+pub const TPM_SE_POLICY: TpmSe = 0x00;
+pub const TPM_SE_TRIAL: TpmSe = 0x00;
+
 // TPM2 command codes
 pub const TPM_CC_PCR_READ: TpmCc = 0x0000017E;
 pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
+pub const TPM_START_AUTH_SESSION: TpmCc = 0x00000176;
 
 pub const TPM2_NUM_PCR_BANKS: usize = 16;
 pub const TPM2_MAX_PCRS: usize = 24;
@@ -93,8 +108,8 @@ pub const MAX_HASH_SIZE: usize = mem::size_of::<TpmuHa>();
 // TPM2B_DIGEST
 #[derive(Copy, Clone, Debug)]
 pub struct Tpm2bDigest {
-    size: u16,
-    buffer: [u8; MAX_HASH_SIZE],
+    pub size: u16,
+    pub buffer: [u8; MAX_HASH_SIZE],
 }
 
 impl inout::Tpm2StructOut for Tpm2bDigest {
@@ -104,8 +119,21 @@ impl inout::Tpm2StructOut for Tpm2bDigest {
     }
 }
 
-// TPM2B_AUTH is defined as TPM2B_DIGEST
+impl inout::Tpm2StructIn for Tpm2bDigest {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
+        match self.size.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+
+        self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
+        Ok(())
+    }
+}
+
+// Structures defined as TPM2B_DIGEST
 pub type Tpm2bAuth = Tpm2bDigest;
+pub type Tpm2bNonce = Tpm2bDigest;
 
 impl Tpm2bDigest {
     pub fn new() -> Self {
@@ -120,7 +148,7 @@ impl Tpm2bDigest {
 
     pub fn from_vec(size: u16, buffer: &[u8]) -> Self {
         let mut digest_buffer = [0; MAX_HASH_SIZE];
-        digest_buffer.clone_from_slice(buffer);
+        digest_buffer[0..size as usize].clone_from_slice(buffer);
         Tpm2bDigest {
             size: size,
             buffer: digest_buffer,
@@ -223,7 +251,7 @@ impl inout::Tpm2StructIn for TpmlDigest {
 }
 
 // TPML_PCR_SELECTION
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct TpmlPcrSelection {
     pub count: u32,
     pub pcr_selections: [TpmsPcrSelection; TPM2_NUM_PCR_BANKS],
@@ -241,8 +269,14 @@ impl TpmlPcrSelection {
 impl inout::Tpm2StructOut for TpmlPcrSelection {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.count.pack(buff);
+        let mut count = 0;
         for pcr_selection in self.pcr_selections.iter() {
+            if count >= self.count {
+                println!("breaking");
+                break;
+            }
             pcr_selection.pack(buff);
+            count += 1;
         }
     }
 }
@@ -277,11 +311,19 @@ pub union TpmuEncryptedSecret {
 }
 
 // TPM2B_ENCRYPTED_SECRET
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Tpm2bEncryptedSecret {
-    size: u16,
+    pub size: u16,
     // Secret size is defined as the mexium size held by a TpmuEncryptedSecret structure
-    secret: [u8; mem::size_of::<TpmuEncryptedSecret>()],
+    pub secret: [u8; mem::size_of::<TpmuEncryptedSecret>()],
+}
+
+impl inout::Tpm2StructOut for Tpm2bEncryptedSecret {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        // If size is 0, this should be an empty buffer
+        self.size.pack(buff);
+        buff.write_bytes(&self.secret[0..self.size as usize]);
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -884,24 +926,121 @@ pub struct TpmsEccParms {}
 #[derive(Copy, Clone, Debug)]
 pub struct TpmsAsymParms {}
 
+// TPMU_SYM_KEY_BITS
+#[derive(Copy, Clone, Debug)]
+enum TpmuSymKeyBits {
+    Sym(TpmKeyBits),
+    Xor(TpmiAlgHash),
+    Null,
+}
+
+impl inout::Tpm2StructOut for TpmuSymKeyBits {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        match self {
+            TpmuSymKeyBits::Sym(value) | TpmuSymKeyBits::Xor(value) => {
+                value.pack(buff);
+            }
+            TpmuSymKeyBits::Null => {}
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum TpmuSymMode {
+    Sym(TpmiAlgSymMode),
+    // TPM_ALG_XOR and TPM_ALG_NULL do not require a mode
+    Xor,
+    Null,
+}
+
+impl inout::Tpm2StructOut for TpmuSymMode {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        match self {
+            TpmuSymMode::Sym(value) => {
+                value.pack(buff);
+            }
+            TpmuSymMode::Xor | TpmuSymMode::Null => {}
+        }
+    }
+}
+
+// TPMU_SYM_DETAILS. The spec currently does not make any use of this
+// structure
+#[derive(Copy, Clone, Debug)]
+enum TpmuSymDetails {
+    Sym,
+    Xor,
+    Null,
+}
+
+impl inout::Tpm2StructOut for TpmuSymDetails {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {}
+}
+
 // TPMT_SYM_DEF_OBJECT
 #[derive(Debug, Copy, Clone)]
 pub struct TpmtSymDefObject {
     algorithm: TpmiAlgSymObject,
-    key_bits: u16,
-    mode: TpmiAlgSymMode,
-    // details can be omitted if none of the
-    // selectors produces any data
-    // details: TPMU_SYM_DETAILS,
+    key_bits: TpmuSymKeyBits,
+    mode: TpmuSymMode,
+    details: TpmuSymDetails,
 }
 
 impl TpmtSymDefObject {
-    pub fn new_tpmt_sym_def_object() -> Self {
+    pub fn new_aes_128() -> Self {
         TpmtSymDefObject {
             algorithm: TPM_ALG_AES,
-            key_bits: 128,
-            mode: TPM_ALG_CFB,
+            key_bits: TpmuSymKeyBits::Sym(128),
+            mode: TpmuSymMode::Sym(TPM_ALG_CFB),
+            details: TpmuSymDetails::Sym,
         }
+    }
+
+    pub fn new_null() -> Self {
+        TpmtSymDefObject {
+            algorithm: TPM_ALG_NULL,
+            key_bits: TpmuSymKeyBits::Null,
+            mode: TpmuSymMode::Null,
+            details: TpmuSymDetails::Null,
+        }
+    }
+}
+
+impl inout::Tpm2StructOut for TpmtSymDefObject {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        if self.algorithm == TPM_ALG_NULL {
+            self.algorithm.pack(buff);
+        } else {
+            panic!("not supported");
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct TpmtSymDef {
+    algorithm: TpmiAlgSym,
+    key_bits: TpmuSymKeyBits,
+    mode: TpmuSymMode,
+    details: TpmuSymDetails,
+}
+
+impl TpmtSymDef {
+    pub fn new_null() -> Self {
+        TpmtSymDef {
+            algorithm: TPM_ALG_NULL,
+            key_bits: TpmuSymKeyBits::Null,
+            mode: TpmuSymMode::Null,
+            details: TpmuSymDetails::Null,
+        }
+    }
+}
+
+impl inout::Tpm2StructOut for TpmtSymDef {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.algorithm.pack(buff);
+        self.key_bits.pack(buff);
+        self.mode.pack(buff);
+        self.details.pack(buff);
     }
 }
 
@@ -942,7 +1081,7 @@ impl TpmsRsaParams {
             panic!("only 2048 bits key supported, got {}", key_len);
         }
         TpmsRsaParams {
-            symmetric: TpmtSymDefObject::new_tpmt_sym_def_object(),
+            symmetric: TpmtSymDefObject::new_aes_128(),
             scheme: TpmtRsaScheme::new_tpmt_rsa_scheme(),
             key_bits: (key_len * 8) as u16,
             exponent: exp_result.unwrap(),
@@ -1145,4 +1284,19 @@ impl Tpm2bPublic {
 pub struct Tpm2bData {
     size: u16,
     buffer: Vec<u8>,
+}
+
+// TPMS_AUTH_COMMAND structure
+pub struct TpmsAuthCommand {
+    session_handle: TpmiShAuthSession,
+    nonce: Tpm2bNonce,
+    session_attributes: TpmaSession,
+    hmac: Tpm2bAuth,
+}
+
+// TPMS_AUTH_RESPONSE
+pub struct TpmsAuthResponse {
+    nonce: Tpm2bNonce,
+    session_attributes: TpmaSession,
+    hmac: Tpm2bAuth,
 }

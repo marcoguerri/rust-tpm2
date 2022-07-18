@@ -2,6 +2,7 @@ mod crypto;
 mod device;
 mod tpm2;
 use crate::crypto::crypto::CFBSymAlg;
+use crate::tpm2::commands::session::tpm2_startauth_session;
 use tpm2::commands::import;
 use tpm2::commands::pcrread;
 use tpm2::commands::pcrs::PCRSelection;
@@ -15,7 +16,7 @@ extern crate mem_macros;
 fn main() {
     startup::tpm2_startup(tcg::TPM_SU_CLEAR);
 
-    import::tpm2_import();
+    //    import::tpm2_import();
     let mut pcrs = Vec::new();
     for n in 0..MAX_PCR + 1 {
         pcrs.push(n as u8);
@@ -27,10 +28,12 @@ fn main() {
             0
         }
         Err(err) => {
-            println!("{:?}", err);
+            println!("There was an error {:?}", err);
             1
         }
     };
+
+    tpm2_startauth_session();
 
     println!("cfb encryption test");
     CFBSymAlg();

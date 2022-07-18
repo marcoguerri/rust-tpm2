@@ -3,18 +3,18 @@ use crate::tpm2::serialization::inout;
 use crate::tpm2::types::tcg;
 use std::result;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct CommandHeader {
-    tag: tcg::TpmiStCommandTag,
-    command_size: u32,
-    command_code: tcg::TpmCc,
+    pub tag: tcg::TpmiStCommandTag,
+    pub command_size: u32,
+    pub command_code: tcg::TpmCc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ResponseHeader {
-    tag: tcg::TpmiStCommandTag,
-    response_size: u32,
-    response_code: tcg::TpmRc,
+    pub tag: tcg::TpmiStCommandTag,
+    pub response_size: u32,
+    pub response_code: tcg::TpmRc,
 }
 
 impl ResponseHeader {

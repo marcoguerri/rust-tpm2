@@ -16,6 +16,7 @@ use std::mem;
 use std::result;
 
 // TPM2_PCR_Read command
+#[derive(Copy, Clone, Debug)]
 pub struct PcrReadCommand {
     header: CommandHeader,
     pcr_selection_in: tcg::TpmlPcrSelection,
@@ -200,6 +201,8 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
                 let mut buffer = inout::StaticByteBuffer::new();
                 inout::pack(&[cmd_pcr_read], &mut buffer);
 
+                println!("PCR read command: {:?}", cmd_pcr_read);
+
                 let mut resp_buffer = inout::StaticByteBuffer::new();
                 match tpm_device.send_recv(&mut buffer, &mut resp_buffer) {
                     Err(err) => {
@@ -212,7 +215,13 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
                 let resp = PcrReadResponse::new(&mut resp_buffer);
                 match resp {
                     Ok(pcr_read_response) => match pcr_read_response.to_pcr_values() {
-                        Ok(pcrs) => all_pcrs.merge(pcrs.get_map()),
+                        Ok(pcrs) => {
+                            println!(
+                                "pcr read response code {:02x?}",
+                                pcr_read_response.header.response_code
+                            );
+                            all_pcrs.merge(pcrs.get_map());
+                        }
                         Err(err) => return Err(err),
                     },
                     Err(err) => return Err(err),
@@ -224,9 +233,9 @@ pub fn tpm2_pcr_read(selection: &[PCRSelection]) -> result::Result<PCRs, errors:
         }
     }
 
-    println!("{}", all_pcrs);
+    println!("all PCRS {:?}", all_pcrs);
 
     Err(errors::TpmError {
-        msg: "not implemented".to_string(),
+        msg: "all is fine".to_string(),
     })
 }
