@@ -8,9 +8,11 @@ use crate::tcg::Tpm2bNonce;
 use crate::tcg::TpmSe;
 use crate::tcg::TpmiAlgHash;
 use crate::tcg::TpmiShAuthSession;
+use crate::tcg::TpmsAuthCommand;
 use crate::tcg::TpmtSymDef;
 use crate::tcg::TpmuEncryptedSecret;
 use crate::tcg::MAX_HASH_SIZE;
+use crate::tcg::TPMA_SESSION_CONTINUE_SESSION;
 use crate::tcg::TPM_ALG_NULL;
 use crate::tcg::TPM_ALG_SHA256;
 use crate::tcg::TPM_RH_NULL;
@@ -29,7 +31,7 @@ use std::mem;
 use std::result;
 
 #[derive(Copy, Clone, Debug)]
-pub struct StartAuthSessionCommandBody {
+pub struct StartAuthSessionCommand {
     // determines how the value of encyprtedSalt is encrypted. The decrypted secret value
     // is used to compute the session key. tpmKey could be TPM_RH_NULL and encryptedSalt
     // could be Empty Buffer
@@ -42,7 +44,7 @@ pub struct StartAuthSessionCommandBody {
     auth_hash: TpmiAlgHash,
 }
 
-impl inout::Tpm2StructOut for StartAuthSessionCommandBody {
+impl inout::Tpm2StructOut for StartAuthSessionCommand {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.tpm_key.pack(buff);
         self.bind_key.pack(buff);
@@ -55,15 +57,15 @@ impl inout::Tpm2StructOut for StartAuthSessionCommandBody {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct StartAuthSessionCommand {
+pub struct StartAuthSession {
     header: CommandHeader,
-    body: StartAuthSessionCommandBody,
+    command: StartAuthSessionCommand,
 }
 
-impl inout::Tpm2StructOut for StartAuthSessionCommand {
+impl inout::Tpm2StructOut for StartAuthSession {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.header.pack(buff);
-        self.body.pack(buff);
+        self.command.pack(buff);
     }
 }
 
@@ -109,8 +111,8 @@ impl inout::Tpm2StructIn for StartAuthSessionResponse {
     }
 }
 
-// Returns session handle and initial nonce from the TPM
-pub fn tpm2_startauth_session() {
+// Initiates Auth session and returns TPMS_AUTH_COMMAND structure
+pub fn tpm2_startauth_session() -> TpmsAuthCommand {
     let mut nonce: [u8; MAX_HASH_SIZE] = [0; MAX_HASH_SIZE];
 
     nonce[0] = 0x01;
@@ -123,7 +125,7 @@ pub fn tpm2_startauth_session() {
 
     let mut buff = inout::StaticByteBuffer::new();
 
-    let body = StartAuthSessionCommandBody {
+    let body = StartAuthSessionCommand {
         tpm_key: TPM_RH_NULL,
         bind_key: TPM_RH_NULL,
         nonce_caller: Tpm2bDigest {
@@ -134,6 +136,13 @@ pub fn tpm2_startauth_session() {
             size: 0,
             secret: [0; mem::size_of::<TpmuEncryptedSecret>()],
         },
+        // This is going to be a policy session, which therefore does not
+        // make use of HMAC authorization.
+        // From TPM specs:
+        // The most typical use of a policy session will be with tpmKey and bind both set to
+        // TPM_RH_NULL. When this option is selected, an HMAC computation might not be performed
+        // when the policy session is used and the session nonce and auth values may be Empty Buffers
+        // (see TPM 2.0 Part 3, TPM2_PolicyAuthValue). NOTE 2 When the session
         session_type: TPM_SE_POLICY,
         symmetric: TpmtSymDef::new_null(),
         auth_hash: TPM_ALG_SHA256,
@@ -142,13 +151,13 @@ pub fn tpm2_startauth_session() {
     println!("body size {:?}", buff.to_bytes().len());
     println!("command header size {:?}", mem::size_of::<CommandHeader>());
 
-    let auth_command = StartAuthSessionCommand {
+    let auth_command = StartAuthSession {
         header: CommandHeader {
             tag: TPM_ST_NO_SESSION,
             command_size: (10 + buff.to_bytes().len()) as u32,
             command_code: TPM_START_AUTH_SESSION,
         },
-        body: body,
+        command: body,
     };
 
     println!("auth command {:?}", auth_command);
@@ -174,11 +183,28 @@ pub fn tpm2_startauth_session() {
     match resp {
         Ok(start_auth_response) => {
             println!("start auth response {:?}", start_auth_response);
+            // From the documentation:
+            // Regardless of the setting of the adminWithPolicy attribute, operations that require ADMIN role
+            // authorization may be provided by a policy session that satisfies the object's authPolicy.
+            // For TPM2_Import, there should be not need for ADMIN authorization. Therefore for the time
+            // being we can just returns a TpmsAuthCommand that contains the session handle and
+            // continue session attribute
+            //
+            TpmsAuthCommand {
+                session_handle: start_auth_response.session_handle,
+                nonce: Tpm2bNonce {
+                    size: 0,
+                    buffer: [0; 64],
+                },
+                session_attributes: TPMA_SESSION_CONTINUE_SESSION,
+                hmac: Tpm2bDigest {
+                    size: 0,
+                    buffer: [0; 64],
+                },
+            }
         }
         Err(err) => {
             panic!("error");
         }
-    };
-
-    println!("starting auth session");
+    }
 }

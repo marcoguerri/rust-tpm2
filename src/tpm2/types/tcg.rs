@@ -42,6 +42,8 @@ pub type TpmiShAuthSession = Handle;
 
 pub const TPM_RH_NULL: Handle = 0x40000007;
 
+pub const TPMA_SESSION_CONTINUE_SESSION: TpmaSession = 0x1;
+
 // Derived types
 pub type TpmiAlgPublic = TpmAlgId;
 pub type TpmiAlgHash = TpmAlgId;
@@ -64,6 +66,7 @@ pub const TPM_SE_TRIAL: TpmSe = 0x00;
 // TPM2 command codes
 pub const TPM_CC_PCR_READ: TpmCc = 0x0000017E;
 pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
+pub const TPM_CC_IMPORT: TpmCc = 0x00000156;
 pub const TPM_START_AUTH_SESSION: TpmCc = 0x00000176;
 
 pub const TPM2_NUM_PCR_BANKS: usize = 16;
@@ -318,6 +321,15 @@ pub struct Tpm2bEncryptedSecret {
     pub secret: [u8; mem::size_of::<TpmuEncryptedSecret>()],
 }
 
+impl Tpm2bEncryptedSecret {
+    pub fn new_empty() -> Self {
+        Tpm2bEncryptedSecret {
+            size: 0,
+            secret: [0; mem::size_of::<TpmuEncryptedSecret>()],
+        }
+    }
+}
+
 impl inout::Tpm2StructOut for Tpm2bEncryptedSecret {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         // If size is 0, this should be an empty buffer
@@ -437,6 +449,7 @@ impl Tpm2bPrivate {
         parent: &rsa::RsaPublicKey,
         sensitive: TpmtSensitive,
         public: TpmtPublic,
+        enc_seed_out: &mut Tpm2bEncryptedSecret,
     ) -> Self {
         // Algorithm for creating a `duplicate` TPM2B_PRIVATE structure is the following:
         // * Create seed for symmetric encryption of sensitive
@@ -501,6 +514,9 @@ impl Tpm2bPrivate {
         let enc_seed = parent
             .encrypt(&mut rng, padding, &seed[..])
             .expect("failed to encrypt");
+
+        enc_seed_out.size = enc_seed.len() as u16;
+        enc_seed_out.secret.clone_from_slice(&enc_seed);
 
         println!("encrypted seed is {:02x?}", enc_seed);
         println!("");
@@ -1257,9 +1273,10 @@ impl TpmtPublic {
 // An object description requires a TPM2B_PUBLIC structure and may require a TPMT_SENSITIVE
 // structure. When the structure is stored off the TPM, the TPMT_SENSITIVE structure is
 // encrypted within a TPM2B_PRIVATE structure
+#[derive(Clone, Copy)]
 pub struct Tpm2bPublic {
-    size: u16,
-    public: TpmtPublic,
+    pub size: u16,
+    pub public: TpmtPublic,
 }
 
 impl Tpm2bPublic {
@@ -1279,24 +1296,47 @@ impl Tpm2bPublic {
     }
 }
 
+impl inout::Tpm2StructOut for Tpm2bPublic {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        self.public.pack(buff);
+    }
+}
+
 // TPM2B_DATA
-#[derive(Default, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Tpm2bData {
-    size: u16,
-    buffer: Vec<u8>,
+    pub size: u16,
+    pub buffer: [u8; 4096],
+}
+
+impl inout::Tpm2StructOut for Tpm2bData {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.size.pack(buff);
+        buff.write_bytes(&self.buffer);
+    }
 }
 
 // TPMS_AUTH_COMMAND structure
 pub struct TpmsAuthCommand {
-    session_handle: TpmiShAuthSession,
-    nonce: Tpm2bNonce,
-    session_attributes: TpmaSession,
-    hmac: Tpm2bAuth,
+    pub session_handle: TpmiShAuthSession,
+    pub nonce: Tpm2bNonce,
+    pub session_attributes: TpmaSession,
+    pub hmac: Tpm2bAuth,
+}
+
+impl inout::Tpm2StructOut for TpmsAuthCommand {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.session_handle.pack(buff);
+        self.nonce.pack(buff);
+        self.session_attributes.pack(buff);
+        self.hmac.pack(buff);
+    }
 }
 
 // TPMS_AUTH_RESPONSE
 pub struct TpmsAuthResponse {
-    nonce: Tpm2bNonce,
-    session_attributes: TpmaSession,
-    hmac: Tpm2bAuth,
+    pub nonce: Tpm2bNonce,
+    pub session_attributes: TpmaSession,
+    pub hmac: Tpm2bAuth,
 }

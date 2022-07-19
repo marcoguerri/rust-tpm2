@@ -1,7 +1,6 @@
 mod crypto;
 mod device;
 mod tpm2;
-use crate::crypto::crypto::CFBSymAlg;
 use crate::tpm2::commands::session::tpm2_startauth_session;
 use tpm2::commands::import;
 use tpm2::commands::pcrread;
@@ -33,8 +32,7 @@ fn main() {
         }
     };
 
-    tpm2_startauth_session();
-
-    println!("cfb encryption test");
-    CFBSymAlg();
+    let auth: tcg::TpmsAuthCommand = tpm2_startauth_session();
+    // Create import blob
+    //    import::tpm2_import();
 }

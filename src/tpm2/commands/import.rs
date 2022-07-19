@@ -1,3 +1,16 @@
+use crate::tcg::Handle;
+use crate::tcg::Tpm2bData;
+use crate::tcg::Tpm2bEncryptedSecret;
+use crate::tcg::Tpm2bPrivate;
+use crate::tcg::Tpm2bPublic;
+use crate::tcg::TpmsAuthCommand;
+use crate::tcg::TpmtSymDefObject;
+use crate::tcg::TPM_ALG_NULL;
+use crate::tcg::TPM_ST_SESSIONS;
+use crate::tpm2::commands::commands::CommandHeader;
+use crate::tpm2::serialization::inout;
+use crate::tpm2::serialization::inout::RwBytes;
+use crate::tpm2::serialization::inout::Tpm2StructOut;
 use crate::tpm2::types::tcg;
 use pem::parse;
 use rsa;
@@ -56,8 +69,33 @@ pwIDAQAB
 -----END PUBLIC KEY-----
 ";
 
-pub fn tpm2_import() {
-    println!("Hello world from import path..");
+#[derive(Copy, Clone)]
+pub struct ImportCommand {
+    encryption_key: Tpm2bData,
+    public: Tpm2bPublic,
+    duplicate: Tpm2bPrivate,
+    symseed: Tpm2bEncryptedSecret,
+    alg: TpmtSymDefObject,
+}
+
+impl inout::Tpm2StructOut for ImportCommand {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.encryption_key.pack(buff);
+        self.public.pack(buff);
+        self.duplicate.pack(buff);
+        self.symseed.pack(buff);
+        self.alg.pack(buff);
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Import {
+    header: CommandHeader,
+    command: ImportCommand,
+}
+
+pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
+    println!("importing with parent_handle {:02x?}", parent_handle);
 
     let pem_result = parse(SAMPLE);
     match pem_result {
@@ -67,13 +105,6 @@ pub fn tpm2_import() {
     let pem = pem_result.unwrap();
     println!("{}", pem.tag);
 
-    // Create TPM2B_PUBLIC, i.e. EK public key area
-    //
-    // pub struct Tpm2BPublic {
-    //  size: u16,
-    //  public: TpmtPublic,
-    //}
-    //
     let public_key_result = rsa::RsaPublicKey::from_public_key_pem(SAMPLE);
     match public_key_result {
         Ok(_) => (),
@@ -106,6 +137,40 @@ pub fn tpm2_import() {
         128,
     );
 
+    let mut enc_seed: Tpm2bEncryptedSecret = Tpm2bEncryptedSecret::new_empty();
+
     // Create the duplicate (TPM2B_PRIVATE) object based on the sensitive content
-    let duplicate = tcg::Tpm2bPrivate::new_duplicate(&public_key, sensitive, public);
+    let duplicate = tcg::Tpm2bPrivate::new_duplicate(&public_key, sensitive, public, &mut enc_seed);
+
+    let mut buff_public = inout::StaticByteBuffer::new();
+    public.pack(&mut buff_public);
+
+    let import_command = ImportCommand {
+        encryption_key: Tpm2bData {
+            size: 0,
+            buffer: [0; 4096],
+        },
+        public: Tpm2bPublic {
+            size: buff_public.to_bytes().len() as u16,
+            public: public,
+        },
+        duplicate: duplicate,
+        symseed: enc_seed,
+        alg: TpmtSymDefObject::new_null(),
+    };
+
+    let mut buff_import_command = inout::StaticByteBuffer::new();
+
+    parent_handle.pack(&mut buff_import_command);
+    auth.pack(&mut buff_import_command);
+    import_command.pack(&mut buff_import_command);
+
+    let import = Import {
+        header: CommandHeader {
+            tag: TPM_ST_SESSIONS,
+            command_size: (buff_import_command.to_bytes().len() + 10) as u32,
+            command_code: tcg::TPM_CC_IMPORT,
+        },
+        command: import_command,
+    };
 }
