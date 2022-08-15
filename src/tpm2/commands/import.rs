@@ -1,3 +1,8 @@
+use crate::device::raw;
+use crate::device::raw::TpmDeviceOps;
+use crate::device::tcp;
+use std::{thread, time::Duration};
+
 use crate::tcg::Handle;
 use crate::tcg::Tpm2bData;
 use crate::tcg::Tpm2bEncryptedSecret;
@@ -8,13 +13,17 @@ use crate::tcg::TpmtSymDefObject;
 use crate::tcg::TPM_ALG_NULL;
 use crate::tcg::TPM_ST_SESSIONS;
 use crate::tpm2::commands::commands::CommandHeader;
+use crate::tpm2::commands::commands::ResponseHeader;
+use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::RwBytes;
+use crate::tpm2::serialization::inout::Tpm2StructIn;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
 use crate::tpm2::types::tcg;
 use pem::parse;
 use rsa;
 use rsa::pkcs8::DecodePublicKey;
+use std::result;
 
 /*
 
@@ -58,18 +67,19 @@ use rsa::pkcs8::DecodePublicKey;
  *
  * */
 
-const SAMPLE: &'static str = "-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmxvJXDAr3S7+/uc32zLf
-+hSpB5LNY94IYrUXytIn6pU1yT6WIivyAdwuwF3lU76eC/HbGERTqczVqZ2Twmh3
-ONLViFGERfNQ5H7j/krl9evo9DEpZeD6g3hQ40uLLHX0pc4pzB7xV/8Xg9CCCkO2
-36p+9mXUtJBLfYNwP5S9fcz9ajv17i/WsddLh06y1D7FN3YWK0jWKoVNa3Wht21U
-tiumXn8kNTfVPZ4c2sC4asrTBj4aTyrwPyj2gC4hwvNHXdKv5rqoSlFUSYY/Z42Y
-/GFOh7XcNHTYWLDdcvce83SUxrNDdLQBLw3bJlTmyQOrMTRdhrzITq80iialY6xs
-pwIDAQAB
+const SAMPLE: &'static str = "
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqxsrFgeyHMRV/HjmOQJ7
+QQrIf7Lv2Cl1ZR5lEoWSawNau1URHUqs1A2m1PhzcNGSsRvRbOKC7amV/6kOX1Z6
+wg7disM80pIGXdFvpizk5bx+1R6HavO5y1iUyRG2VYeshdW7JV97njC8mYdwEDWc
+83DNQG5qddSXksADfse6nb8E2zmR+/tjWRxOFCoFAk8XlCTQjFyjEMcYweapbgXM
+PL9aI+W9wqaRc7GSHlttzhNxZLz+vicrGBv4l0VvtVG8mghbSU6nwGL/6uLnCWHM
+SvNhF6DkppqncLYCmArRUIOcvcaXXPSzADV5fwOgbYyThIZih6NKzRpgkc9dskw6
+JwIDAQAB
 -----END PUBLIC KEY-----
 ";
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ImportCommand {
     encryption_key: Tpm2bData,
     public: Tpm2bPublic,
@@ -81,17 +91,82 @@ pub struct ImportCommand {
 impl inout::Tpm2StructOut for ImportCommand {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.encryption_key.pack(buff);
+        println!("so far buffer is after enc key {:02x?}", buff.to_bytes());
         self.public.pack(buff);
+        println!("so far buffer is after public {:02x?}", buff.to_bytes());
         self.duplicate.pack(buff);
+        println!("so far buffer is after duplicate {:02x?}", buff.to_bytes());
         self.symseed.pack(buff);
+        println!("so far buffer is after symseed {:02x?}", buff.to_bytes());
         self.alg.pack(buff);
+        println!("so far buffer is after alg {:02x?}", buff.to_bytes());
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Import {
     header: CommandHeader,
+    handle: Handle,
+    auth: TpmsAuthCommand,
     command: ImportCommand,
+}
+
+impl inout::Tpm2StructOut for Import {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.header.pack(buff);
+
+        self.handle.pack(buff);
+        let mut auth_buffer = inout::StaticByteBuffer::new();
+
+        self.auth.pack(&mut auth_buffer);
+
+        let size_auth: u32 = auth_buffer.to_bytes().len() as u32;
+        println!("setting size_auth to {:?}", size_auth);
+        println!("so far buffer is before auth {:02x?}", buff.to_bytes());
+        size_auth.pack(buff);
+
+        buff.write_bytes(auth_buffer.to_bytes());
+
+        println!("so far buffer after auth is {:02x?}", buff.to_bytes());
+        self.command.pack(buff);
+
+        println!("so far buffer is {:02x?}", buff.to_bytes());
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ImportResponse {
+    header: ResponseHeader,
+    out_private: Tpm2bPrivate,
+}
+
+impl inout::Tpm2StructIn for ImportResponse {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
+        match self.header.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+
+        match self.out_private.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+        Ok(())
+    }
+}
+impl ImportResponse {
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+        let mut resp = ImportResponse {
+            header: ResponseHeader::new(),
+            out_private: Tpm2bPrivate::new(),
+        };
+
+        let unpack_result = resp.unpack(buff);
+        match unpack_result {
+            Ok(_) => Ok(resp),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
@@ -148,7 +223,7 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
     let import_command = ImportCommand {
         encryption_key: Tpm2bData {
             size: 0,
-            buffer: [0; 4096],
+            buffer: [0; 1024],
         },
         public: Tpm2bPublic {
             size: buff_public.to_bytes().len() as u16,
@@ -162,7 +237,15 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
     let mut buff_import_command = inout::StaticByteBuffer::new();
 
     parent_handle.pack(&mut buff_import_command);
-    auth.pack(&mut buff_import_command);
+
+    let mut buff_auth = inout::StaticByteBuffer::new();
+    auth.pack(&mut buff_auth);
+
+    let size_auth: u32 = buff_auth.to_bytes().len() as u32;
+
+    size_auth.pack(&mut buff_import_command);
+    buff_import_command.write_bytes(buff_auth.to_bytes());
+
     import_command.pack(&mut buff_import_command);
 
     let import = Import {
@@ -171,6 +254,44 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
             command_size: (buff_import_command.to_bytes().len() + 10) as u32,
             command_code: tcg::TPM_CC_IMPORT,
         },
+        handle: parent_handle,
+        auth: auth,
         command: import_command,
     };
+
+    println!("import buffer {:02x?}", import);
+
+    let mut buff_import = inout::StaticByteBuffer::new();
+
+    import.pack(&mut buff_import);
+    let mut resp_buff = inout::StaticByteBuffer::new();
+
+    let mut tpm_device: raw::TpmDevice = raw::TpmDevice {
+        rw: &mut tcp::TpmSwtpmIO::new(),
+    };
+
+    println!(
+        "sending buffer import {:02x?}, len {:?}",
+        buff_import.to_bytes(),
+        buff_import.to_bytes().len()
+    );
+
+    thread::sleep(Duration::from_millis(10000));
+
+    match tpm_device.send_recv(&mut buff_import, &mut resp_buff) {
+        Err(err) => {
+            panic!("error");
+        }
+        _ => (),
+    }
+
+    let resp = ImportResponse::new(&mut resp_buff);
+    match resp {
+        Ok(import_response) => {
+            println!("import response {:?}", import_response);
+        }
+        Err(err) => {
+            panic!("error");
+        }
+    }
 }

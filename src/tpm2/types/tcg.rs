@@ -17,6 +17,8 @@ use hmac::{Hmac, Mac};
 
 use num_traits::ToPrimitive;
 use rand::rngs::OsRng;
+use std::fmt;
+use std::str;
 
 use rand;
 use rand::Rng;
@@ -341,7 +343,7 @@ impl inout::Tpm2StructOut for Tpm2bEncryptedSecret {
 #[derive(Copy, Clone)]
 pub struct _Private {
     integrity_outer: Tpm2bDigest,
-    integrity_inner: Tpm2bDigest,
+    //integrity_inner: Tpm2bDigest,
     size_sensitive: u16,
     enc_sensitive: [u8; mem::size_of::<Tpm2bSensitive>()],
 }
@@ -349,16 +351,16 @@ pub struct _Private {
 impl inout::Tpm2StructOut for _Private {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.integrity_outer.pack(buff);
-        if self.integrity_inner.size > 0 {
-            self.integrity_inner.pack(buff);
-        }
-        self.size_sensitive.pack(buff);
+        //if self.integrity_inner.size > 0 {
+        //    self.integrity_inner.pack(buff);
+        //}
+        //self.size_sensitive.pack(buff);
         buff.write_bytes(&self.enc_sensitive[0..self.size_sensitive as usize]);
     }
 }
 
 // TPM2B_PRIVATE
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Tpm2bPrivate {
     size: u16,
     // buffer is sized based on _PRIVATE data structure, which is defined
@@ -373,6 +375,27 @@ impl inout::Tpm2StructOut for Tpm2bPrivate {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.size.pack(buff);
         buff.write_bytes(&self.buffer[0..self.size as usize]);
+    }
+}
+
+impl Tpm2bPrivate {
+    pub fn new() -> Self {
+        Tpm2bPrivate {
+            size: 0,
+            buffer: [0; mem::size_of::<Tpm2bDigest>() * 2 + mem::size_of::<Tpm2bSensitive>()],
+        }
+    }
+}
+
+impl inout::Tpm2StructIn for Tpm2bPrivate {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
+        match self.size.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+
+        self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
+        Ok(())
     }
 }
 
@@ -486,6 +509,7 @@ impl Tpm2bPrivate {
         // Where
         // packedSecret is sensitive_buff
         let name = get_name(public);
+        println!("name is {:02x?}", name);
 
         let mut public_buff = inout::StaticByteBuffer::new();
 
@@ -505,18 +529,24 @@ impl Tpm2bPrivate {
             0xb4, 0xab,
         ];
 
-        // Encrypt the seed with parent key
+        // Encrypt the seed with parent key. This cannot match the encrypted seed of another
+        // implementation because we are reading from rnd.
         let mut rng = rand::thread_rng();
 
-        let label = "DUPLICATE";
+        //let label: &[u8] = &[0x44, 0x55, 0x50, 0x4c, 0x49, 0x43, 0x41, 0x54, 0x45];
 
-        let padding = PaddingScheme::new_oaep_with_label::<sha2::Sha256, &str>(label);
+        //let label_str = str::from_utf8(label).expect("label is wrong");
+
+        //printl0n!("Label is {:02x?}", label_str);
+        println!("Encrypting with parent {:02x?}", parent);
+
+        let padding = PaddingScheme::new_oaep_with_label::<sha2::Sha256, &str>("DUPLICATE");
         let enc_seed = parent
             .encrypt(&mut rng, padding, &seed[..])
             .expect("failed to encrypt");
 
         enc_seed_out.size = enc_seed.len() as u16;
-        enc_seed_out.secret.clone_from_slice(&enc_seed);
+        enc_seed_out.secret[0..enc_seed_out.size as usize].clone_from_slice(&enc_seed);
 
         println!("encrypted seed is {:02x?}", enc_seed);
         println!("");
@@ -602,10 +632,16 @@ impl Tpm2bPrivate {
             },
             // Since for creation of duplicate IV was all zero, it doesn't need to
             // be added to _Private, so integrity_inner shall be ignored
-            integrity_inner: Tpm2bDigest {
-                size: 0,
-                buffer: [0; 64],
-            },
+            //integrity_inner: Tpm2bDigest {
+            //    size: 0,
+            //    buffer: [0; 64],
+            //},
+
+            // enc_sensitive already includes the size, so size_sensitive is not needed
+            // neither is Tpm2bDigest needed
+            //size_sensitive: sensitive_buff.to_bytes().len() as u16,
+            // I am mi-using size_sensitive here to be able to serialize with specific
+            // boundary the enc_sentistive, but its value shoudl be known
             size_sensitive: sensitive_buff.to_bytes().len() as u16,
             enc_sensitive: enc_sensitive,
         };
@@ -751,7 +787,7 @@ impl inout::Tpm2StructOut for TpmtSensitive {
 }
 
 // TPMU_PUBLIC_ID
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum TpmuPublicId {
     KeyedHash(Tpm2bDigest),
     Sym(Tpm2bDigest),
@@ -850,8 +886,14 @@ impl TpmuAsymScheme {
     }
 }
 
+impl std::fmt::Debug for TpmuAsymScheme {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Ok(())
+    }
+}
+
 // TPMS_SCHEME_XOR
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsSchemeXor {
     hash_alg: TpmiAlgHash,
     kdf: TpmiAlgKdf,
@@ -865,7 +907,7 @@ impl inout::Tpm2StructOut for TpmsSchemeXor {
 }
 
 // TPMU_SCHEME_KEYEDHASH
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum TpmuSchemeKeyedHash {
     Hmac(TpmsSchemeHmac),
     Xor(TpmsSchemeXor),
@@ -887,7 +929,7 @@ impl inout::Tpm2StructOut for TpmuSchemeKeyedHash {
 }
 
 // TPMT_KEYEDHASH_SCHEME
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmtKeyedHashScheme {
     scheme: TpmiAlgKeyedHashScheme,
     details: TpmuSchemeKeyedHash,
@@ -911,7 +953,7 @@ impl TpmtKeyedHashScheme {
 }
 
 // TPMS_KEYEDHASH_PARMS
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsKeyedHashParms {
     scheme: TpmtKeyedHashScheme,
 }
@@ -1061,7 +1103,7 @@ impl inout::Tpm2StructOut for TpmtSymDef {
 }
 
 // TPMT_RSA_SCHEME
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmtRsaScheme {
     scheme: TpmiAlgRsaScheme,
     details: TpmuAsymScheme,
@@ -1077,7 +1119,7 @@ impl TpmtRsaScheme {
 }
 
 // TPMS_RSA_PARMS
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsRsaParams {
     symmetric: TpmtSymDefObject,
     scheme: TpmtRsaScheme,
@@ -1140,20 +1182,20 @@ impl inout::Tpm2StructOut for Tpm2bPublicKeyRsa {
 }
 
 // TPMS_ECC_POINT
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsEccPoint {
     x: Tpm2bEccParameter,
     y: Tpm2bEccParameter,
 }
 
 // TPMS_DERIVE
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmsDerive {
     label: Tpm2bLabel,
     //context: Tpm2bContext,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum TpmuPublicParms {
     KeyedHashDetail(TpmsKeyedHashParms),
     SymDetail(TpmsSymcipherParms),
@@ -1186,7 +1228,7 @@ impl inout::Tpm2StructOut for TpmuPublicParms {
 }
 
 // TPMT_PUBLIC
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TpmtPublic {
     type_alg: TpmiAlgPublic,
     name_alg: TpmiAlgHash,
@@ -1273,7 +1315,7 @@ impl TpmtPublic {
 // An object description requires a TPM2B_PUBLIC structure and may require a TPMT_SENSITIVE
 // structure. When the structure is stored off the TPM, the TPMT_SENSITIVE structure is
 // encrypted within a TPM2B_PRIVATE structure
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Tpm2bPublic {
     pub size: u16,
     pub public: TpmtPublic,
@@ -1307,17 +1349,18 @@ impl inout::Tpm2StructOut for Tpm2bPublic {
 #[derive(Debug, Clone, Copy)]
 pub struct Tpm2bData {
     pub size: u16,
-    pub buffer: [u8; 4096],
+    pub buffer: [u8; 1024],
 }
 
 impl inout::Tpm2StructOut for Tpm2bData {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.size.pack(buff);
-        buff.write_bytes(&self.buffer);
+        buff.write_bytes(&self.buffer[0..self.size as usize]);
     }
 }
 
 // TPMS_AUTH_COMMAND structure
+#[derive(Debug, Clone, Copy)]
 pub struct TpmsAuthCommand {
     pub session_handle: TpmiShAuthSession,
     pub nonce: Tpm2bNonce,

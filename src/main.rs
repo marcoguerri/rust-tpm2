@@ -1,6 +1,7 @@
 mod crypto;
 mod device;
 mod tpm2;
+use crate::tcg::Handle;
 use crate::tpm2::commands::session::tpm2_startauth_session;
 use tpm2::commands::import;
 use tpm2::commands::pcrread;
@@ -21,18 +22,22 @@ fn main() {
         pcrs.push(n as u8);
     }
     let selection = PCRSelection::new(pcrs);
-    match pcrread::tpm2_pcr_read(&[selection]) {
-        Ok(pcrs) => {
-            println!("{}", pcrs);
-            0
-        }
-        Err(err) => {
-            println!("There was an error {:?}", err);
-            1
-        }
-    };
+    //match pcrread::tpm2_pcr_read(&[selection]) {
+    //    Ok(pcrs) => {
+    //        println!("{}", pcrs);
+    //        0
+    //    }
+    //    Err(err) => {
+    //        println!("There was an error {:?}", err);
+    //        1
+    //    }
+    //};
 
     let auth: tcg::TpmsAuthCommand = tpm2_startauth_session();
+
+    println!("auth command is {:?}", auth);
+
+    let handle: Handle = 0x80000000;
     // Create import blob
-    //    import::tpm2_import();
+    import::tpm2_import(handle, auth);
 }

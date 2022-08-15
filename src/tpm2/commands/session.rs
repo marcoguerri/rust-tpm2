@@ -190,6 +190,7 @@ pub fn tpm2_startauth_session() -> TpmsAuthCommand {
             // being we can just returns a TpmsAuthCommand that contains the session handle and
             // continue session attribute
             //
+            println!("session handle {:02x?}", start_auth_response.session_handle);
             TpmsAuthCommand {
                 session_handle: start_auth_response.session_handle,
                 nonce: Tpm2bNonce {
