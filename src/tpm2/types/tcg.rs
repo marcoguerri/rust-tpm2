@@ -43,6 +43,8 @@ pub type Handle = u32;
 pub type TpmiShAuthSession = Handle;
 
 pub const TPM_RH_NULL: Handle = 0x40000007;
+pub const TPM_RS_PW: Handle = 0x40000009;
+pub const TPM_RH_ENDORSEMENT: Handle = 0x4000000B;
 
 pub const TPMA_SESSION_CONTINUE_SESSION: TpmaSession = 0x1;
 
@@ -62,14 +64,16 @@ pub type TpmiRsaKeyBits = TpmKeyBits;
 pub type TpmSe = u8;
 
 pub const TPM_SE_HMAC: TpmSe = 0x00;
-pub const TPM_SE_POLICY: TpmSe = 0x00;
-pub const TPM_SE_TRIAL: TpmSe = 0x00;
+pub const TPM_SE_POLICY: TpmSe = 0x01;
+pub const TPM_SE_TRIAL: TpmSe = 0x03;
 
 // TPM2 command codes
 pub const TPM_CC_PCR_READ: TpmCc = 0x0000017E;
 pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
 pub const TPM_CC_IMPORT: TpmCc = 0x00000156;
+pub const TPM_CC_POLICY_SECRET: TpmCc = 0x00000151;
 pub const TPM_START_AUTH_SESSION: TpmCc = 0x00000176;
+pub const TPM_CC_LOAD: TpmCc = 0x00000157;
 
 pub const TPM2_NUM_PCR_BANKS: usize = 16;
 pub const TPM2_MAX_PCRS: usize = 24;
@@ -394,6 +398,8 @@ impl inout::Tpm2StructIn for Tpm2bPrivate {
             _ => (),
         }
 
+        println!("Reading {:?}", self.size);
+
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }
@@ -540,7 +546,7 @@ impl Tpm2bPrivate {
         //printl0n!("Label is {:02x?}", label_str);
         println!("Encrypting with parent {:02x?}", parent);
 
-        let padding = PaddingScheme::new_oaep_with_label::<sha2::Sha256, &str>("DUPLICATE");
+        let padding = PaddingScheme::new_oaep_with_label::<sha2::Sha256, &str>("DUPLICATE\0");
         let enc_seed = parent
             .encrypt(&mut rng, padding, &seed[..])
             .expect("failed to encrypt");

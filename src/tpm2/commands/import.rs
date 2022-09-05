@@ -1,11 +1,15 @@
 use crate::device::raw;
 use crate::device::raw::TpmDeviceOps;
 use crate::device::tcp;
+use crate::tcg::TPMA_SESSION_CONTINUE_SESSION;
 use std::{thread, time::Duration};
 
 use crate::tcg::Handle;
+use crate::tcg::Tpm2bAuth;
 use crate::tcg::Tpm2bData;
+use crate::tcg::Tpm2bDigest;
 use crate::tcg::Tpm2bEncryptedSecret;
+use crate::tcg::Tpm2bNonce;
 use crate::tcg::Tpm2bPrivate;
 use crate::tcg::Tpm2bPublic;
 use crate::tcg::TpmsAuthCommand;
@@ -69,15 +73,14 @@ use std::result;
 
 const SAMPLE: &'static str = "
 -----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqxsrFgeyHMRV/HjmOQJ7
-QQrIf7Lv2Cl1ZR5lEoWSawNau1URHUqs1A2m1PhzcNGSsRvRbOKC7amV/6kOX1Z6
-wg7disM80pIGXdFvpizk5bx+1R6HavO5y1iUyRG2VYeshdW7JV97njC8mYdwEDWc
-83DNQG5qddSXksADfse6nb8E2zmR+/tjWRxOFCoFAk8XlCTQjFyjEMcYweapbgXM
-PL9aI+W9wqaRc7GSHlttzhNxZLz+vicrGBv4l0VvtVG8mghbSU6nwGL/6uLnCWHM
-SvNhF6DkppqncLYCmArRUIOcvcaXXPSzADV5fwOgbYyThIZih6NKzRpgkc9dskw6
-JwIDAQAB
------END PUBLIC KEY-----
-";
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA57BwGrJsBn27JvlsE9FV
+D2X2QGRBBrwsWb2yR3PZZQN0Bm6mPIwjw+jT+g5hRdUk8nlc99PnfjNXYI+TEwla
+34uu8lCZ1hghoyl3qbc9EEtT1Z3YMe7xb9IEPEq5Tl4tLzT8Umb0MIvTpUGN2mmI
+GwT9DSyv2h2vIuDrBTlfpUfahzFfmreSCkxqqmtsju5oOGe9gWtH1jTU40M5Q9JT
+/P8FRAUvBkZN3CkYPXwOZft+F/cIcAMKeL670RRzvEhdM85VlOIsDoNumMkY3+dO
+UbS7xiLc+v6iXfyrdosVgkeD6Dq7zRU+66s5fx4O8+0WV7eTMWmu9iBCAcgFeHA0
+EwIDAQAB
+-----END PUBLIC KEY-----";
 
 #[derive(Copy, Clone, Debug)]
 pub struct ImportCommand {
@@ -146,6 +149,10 @@ impl inout::Tpm2StructIn for ImportResponse {
             Err(err) => return Err(err),
             _ => (),
         }
+
+        let mut authSize: u16 = 0;
+
+        authSize.unpack(buff);
 
         match self.out_private.unpack(buff) {
             Err(err) => return Err(err),
@@ -276,8 +283,6 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
         buff_import.to_bytes().len()
     );
 
-    thread::sleep(Duration::from_millis(10000));
-
     match tpm_device.send_recv(&mut buff_import, &mut resp_buff) {
         Err(err) => {
             panic!("error");
@@ -285,13 +290,100 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
         _ => (),
     }
 
+    let ir: ImportResponse;
+
     let resp = ImportResponse::new(&mut resp_buff);
     match resp {
         Ok(import_response) => {
+            ir = import_response;
             println!("import response {:?}", import_response);
         }
         Err(err) => {
             panic!("error");
         }
+    }
+
+    let mut load = LoadCommand {
+        header: CommandHeader {
+            tag: TPM_ST_SESSIONS,
+            command_size: 0,
+            command_code: tcg::TPM_CC_LOAD,
+        },
+        handle: parent_handle,
+        auth: auth,
+        inPrivate: ir.out_private,
+        inPublic: import_command.public,
+    };
+
+    let mut buff_load = inout::StaticByteBuffer::new();
+    let mut load_resp = inout::StaticByteBuffer::new();
+
+    load.pack(&mut buff_load);
+    load.header.command_size = buff_load.to_bytes().len() as u32;
+
+    let mut buff_load_new = inout::StaticByteBuffer::new();
+    load.pack(&mut buff_load_new);
+
+    println!("load buffer {:02x?}", buff_load.to_bytes());
+    println!("load buffer size {:02x?}", load.header.command_size);
+
+    match tpm_device.send_recv(&mut buff_load_new, &mut load_resp) {
+        Err(err) => {
+            panic!("error");
+        }
+        _ => (),
+    }
+
+    println!("load response {:02x?}", load_resp.to_bytes());
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct LoadCommand {
+    header: CommandHeader,
+    handle: Handle,
+    auth: TpmsAuthCommand,
+    inPrivate: Tpm2bPrivate,
+    inPublic: Tpm2bPublic,
+}
+
+impl inout::Tpm2StructOut for LoadCommand {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.header.pack(buff);
+        self.handle.pack(buff);
+
+        let mut auth_buffer = inout::StaticByteBuffer::new();
+        self.auth.pack(&mut auth_buffer);
+
+        let size_auth: u32 = auth_buffer.to_bytes().len() as u32;
+        size_auth.pack(buff);
+
+        buff.write_bytes(auth_buffer.to_bytes());
+        self.inPrivate.pack(buff);
+        self.inPublic.pack(buff);
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct LoadResponse {
+    header: ResponseHeader,
+    handle: Handle,
+    name: Tpm2bDigest,
+}
+
+impl inout::Tpm2StructIn for LoadResponse {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
+        match self.header.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+
+        let mut authSize: u16 = 0;
+
+        authSize.unpack(buff);
+
+        self.handle.unpack(buff);
+        self.name.unpack(buff);
+
+        Ok(())
     }
 }

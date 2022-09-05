@@ -2,6 +2,7 @@ use crate::device::raw;
 use crate::device::raw::TpmDeviceOps;
 use crate::device::tcp;
 use crate::tcg::Handle;
+use crate::tcg::Tpm2bAuth;
 use crate::tcg::Tpm2bDigest;
 use crate::tcg::Tpm2bEncryptedSecret;
 use crate::tcg::Tpm2bNonce;
@@ -27,6 +28,7 @@ use crate::tpm2::serialization::inout::RwBytes;
 use crate::tpm2::serialization::inout::StaticByteBuffer;
 use crate::tpm2::serialization::inout::Tpm2StructIn;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
+use crate::tpm2::types::tcg;
 use std::mem;
 use std::result;
 
@@ -208,4 +210,118 @@ pub fn tpm2_startauth_session() -> TpmsAuthCommand {
             panic!("error");
         }
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PolicySecretCommand {
+    nonce: Tpm2bNonce,
+    cpHashA: Tpm2bDigest,
+    policyRef: Tpm2bNonce,
+    expiration: u32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PolicySecretResponse {}
+
+impl inout::Tpm2StructOut for PolicySecretCommand {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.nonce.pack(buff);
+        self.cpHashA.pack(buff);
+        self.policyRef.pack(buff);
+        self.expiration.pack(buff);
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PolicySecret {
+    header: CommandHeader,
+    entityHandle: Handle,
+    policySession: TpmiShAuthSession,
+    // ----
+    auth: TpmsAuthCommand,
+    // ---
+    command: PolicySecretCommand,
+}
+
+impl inout::Tpm2StructOut for PolicySecret {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.header.pack(buff);
+        self.entityHandle.pack(buff);
+        self.policySession.pack(buff);
+
+        let mut buff_auth = inout::StaticByteBuffer::new();
+        self.auth.pack(&mut buff_auth);
+
+        let size_auth: u32 = buff_auth.to_bytes().len() as u32;
+
+        size_auth.pack(buff);
+        self.auth.pack(buff);
+        self.command.pack(buff);
+    }
+}
+
+pub fn tpm2_policy_secret(handle: Handle, auth: TpmsAuthCommand) {
+    let body = PolicySecretCommand {
+        nonce: Tpm2bNonce::new(),
+        cpHashA: Tpm2bDigest::new(),
+        policyRef: Tpm2bNonce::new(),
+        expiration: 0,
+    };
+
+    let mut buff = inout::StaticByteBuffer::new();
+
+    let mut resp_buff = inout::StaticByteBuffer::new();
+
+    // We need to give an empty auth to PolicySecret, with TPM_RS_PW authorization
+    // (password authorization, it's not necessary to turn it into HMAC authorization
+    // TPM_RS_PW is always available and doesn't require to create an authorization
+    // session.
+    let mut policy_secret = PolicySecret {
+        header: CommandHeader {
+            // Why does this necessarily need to have authorizaionSize?
+            tag: tcg::TPM_ST_SESSIONS,
+            command_size: (10 + buff.to_bytes().len()) as u32,
+            command_code: tcg::TPM_CC_POLICY_SECRET,
+        },
+        entityHandle: handle,
+        policySession: auth.session_handle,
+        auth: TpmsAuthCommand {
+            session_handle: tcg::TPM_RS_PW,
+            nonce: Tpm2bNonce::new(),
+            session_attributes: TPMA_SESSION_CONTINUE_SESSION,
+            hmac: Tpm2bAuth::new(),
+        },
+        command: body,
+    };
+
+    let mut tpm_device: raw::TpmDevice = raw::TpmDevice {
+        rw: &mut tcp::TpmSwtpmIO::new(),
+    };
+
+    let mut buff_policy_secret = inout::StaticByteBuffer::new();
+    policy_secret.pack(&mut buff_policy_secret);
+    policy_secret.header.command_size = buff_policy_secret.to_bytes().len() as u32;
+
+    let mut buff_policy_secret_new = inout::StaticByteBuffer::new();
+    policy_secret.pack(&mut buff_policy_secret_new);
+
+    println!(
+        "policy secret buffer {:x?}",
+        buff_policy_secret_new.to_bytes()
+    );
+
+    let mut resp_buff = inout::StaticByteBuffer::new();
+
+    println!(
+        "policy secret buffer {:x?}",
+        buff_policy_secret_new.to_bytes().len()
+    );
+
+    match tpm_device.send_recv(&mut buff_policy_secret_new, &mut resp_buff) {
+        Err(err) => {
+            panic!("error");
+        }
+        _ => (),
+    }
+    println!("policy secret response buffer {:x?}", resp_buff.to_bytes());
 }

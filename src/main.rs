@@ -2,6 +2,7 @@ mod crypto;
 mod device;
 mod tpm2;
 use crate::tcg::Handle;
+use crate::tpm2::commands::session::tpm2_policy_secret;
 use crate::tpm2::commands::session::tpm2_startauth_session;
 use tpm2::commands::import;
 use tpm2::commands::pcrread;
@@ -35,9 +36,13 @@ fn main() {
 
     let auth: tcg::TpmsAuthCommand = tpm2_startauth_session();
 
+    // Assert poli
+
     println!("auth command is {:?}", auth);
 
-    let handle: Handle = 0x80000000;
+    let handle: Handle = 0x80000001;
     // Create import blob
+    //
+    tpm2_policy_secret(0x4000000B, auth);
     import::tpm2_import(handle, auth);
 }
