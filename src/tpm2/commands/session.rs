@@ -214,10 +214,10 @@ pub fn tpm2_startauth_session() -> TpmsAuthCommand {
 
 #[derive(Copy, Clone, Debug)]
 pub struct PolicySecretCommand {
-    nonce: Tpm2bNonce,
-    cpHashA: Tpm2bDigest,
-    policyRef: Tpm2bNonce,
-    expiration: u32,
+    pub nonce: Tpm2bNonce,
+    pub cpHashA: Tpm2bDigest,
+    pub policyRef: Tpm2bNonce,
+    pub expiration: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -234,13 +234,13 @@ impl inout::Tpm2StructOut for PolicySecretCommand {
 
 #[derive(Copy, Clone, Debug)]
 pub struct PolicySecret {
-    header: CommandHeader,
-    entityHandle: Handle,
-    policySession: TpmiShAuthSession,
+    pub header: CommandHeader,
+    pub entityHandle: Handle,
+    pub policySession: TpmiShAuthSession,
     // ----
-    auth: TpmsAuthCommand,
+    pub auth: TpmsAuthCommand,
     // ---
-    command: PolicySecretCommand,
+    pub command: PolicySecretCommand,
 }
 
 impl inout::Tpm2StructOut for PolicySecret {

@@ -1,7 +1,13 @@
 use crate::device::raw;
 use crate::device::raw::TpmDeviceOps;
+use std::net::{Shutdown, TcpStream};
+
 use crate::device::tcp;
 use crate::tcg::TPMA_SESSION_CONTINUE_SESSION;
+use crate::tpm2::commands::session::PolicySecret;
+use crate::tpm2::commands::session::PolicySecretCommand;
+use crate::tpm2_policy_secret;
+use crate::tpm2_startauth_session;
 use std::{thread, time::Duration};
 
 use crate::tcg::Handle;
@@ -73,13 +79,13 @@ use std::result;
 
 const SAMPLE: &'static str = "
 -----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA57BwGrJsBn27JvlsE9FV
-D2X2QGRBBrwsWb2yR3PZZQN0Bm6mPIwjw+jT+g5hRdUk8nlc99PnfjNXYI+TEwla
-34uu8lCZ1hghoyl3qbc9EEtT1Z3YMe7xb9IEPEq5Tl4tLzT8Umb0MIvTpUGN2mmI
-GwT9DSyv2h2vIuDrBTlfpUfahzFfmreSCkxqqmtsju5oOGe9gWtH1jTU40M5Q9JT
-/P8FRAUvBkZN3CkYPXwOZft+F/cIcAMKeL670RRzvEhdM85VlOIsDoNumMkY3+dO
-UbS7xiLc+v6iXfyrdosVgkeD6Dq7zRU+66s5fx4O8+0WV7eTMWmu9iBCAcgFeHA0
-EwIDAQAB
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArHW0IdnSJFdPzCdfdYSG
+XEfZmvj2FjNgcrwlR9dT3yu8YPpo6dHu6clYucsRsfAUoFeFxHEaBEJKECcqua8R
+ZxOAb9zn9f2NvX/KNpEJCmrrgNZxd4A6B1nV3YIY5MQlV7CAWsXT4jsnRdzTJJkw
+ZkwYv2jWJagEeb0Ba9P+YfSvBlHWYNqMAR0cMLccd0grScw31Z4EWCfnMoceJR5X
+gFp4xbXxCvO9JnRRHK9mJMK9SZtcUHZ3utaNoDoTspcf8SF7TOBYhwJttuCVoHhj
+sGKcOHvV2pXdaBTpAGb8djNWpvGBlYWps7OY6So7NZoY0aHqTGD/ROEutO/sxltA
+qQIDAQAB
 -----END PUBLIC KEY-----";
 
 #[derive(Copy, Clone, Debug)]
@@ -150,9 +156,9 @@ impl inout::Tpm2StructIn for ImportResponse {
             _ => (),
         }
 
-        let mut authSize: u16 = 0;
+        let mut paramSize: u32 = 0;
 
-        authSize.unpack(buff);
+        paramSize.unpack(buff);
 
         match self.out_private.unpack(buff) {
             Err(err) => return Err(err),
@@ -273,9 +279,9 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
     import.pack(&mut buff_import);
     let mut resp_buff = inout::StaticByteBuffer::new();
 
-    let mut tpm_device: raw::TpmDevice = raw::TpmDevice {
-        rw: &mut tcp::TpmSwtpmIO::new(),
-    };
+    let mut stream = tcp::TpmSwtpmIO::new();
+
+    let mut tpm_device: raw::TpmDevice = raw::TpmDevice { rw: &mut stream };
 
     println!(
         "sending buffer import {:02x?}, len {:?}",
@@ -302,6 +308,66 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
             panic!("error");
         }
     }
+    let body = PolicySecretCommand {
+        nonce: Tpm2bNonce::new(),
+        cpHashA: Tpm2bDigest::new(),
+        policyRef: Tpm2bNonce::new(),
+        expiration: 0,
+    };
+
+    let mut buff = inout::StaticByteBuffer::new();
+
+    let mut resp_buff = inout::StaticByteBuffer::new();
+
+    // We need to give an empty auth to PolicySecret, with TPM_RS_PW authorization
+    // (password authorization, it's not necessary to turn it into HMAC authorization
+    // TPM_RS_PW is always available and doesn't require to create an authorization
+    // session.
+    let mut policy_secret = PolicySecret {
+        header: CommandHeader {
+            // Why does this necessarily need to have authorizaionSize?
+            tag: tcg::TPM_ST_SESSIONS,
+            command_size: (10 + buff.to_bytes().len()) as u32,
+            command_code: tcg::TPM_CC_POLICY_SECRET,
+        },
+        entityHandle: 0x4000000B,
+        policySession: auth.session_handle,
+        auth: TpmsAuthCommand {
+            session_handle: tcg::TPM_RS_PW,
+            nonce: Tpm2bNonce::new(),
+            session_attributes: TPMA_SESSION_CONTINUE_SESSION,
+            hmac: Tpm2bAuth::new(),
+        },
+        command: body,
+    };
+
+    let mut buff_policy_secret = inout::StaticByteBuffer::new();
+    policy_secret.pack(&mut buff_policy_secret);
+    policy_secret.header.command_size = buff_policy_secret.to_bytes().len() as u32;
+
+    let mut buff_policy_secret_new = inout::StaticByteBuffer::new();
+    policy_secret.pack(&mut buff_policy_secret_new);
+
+    println!(
+        "policy secret buffer {:x?}",
+        buff_policy_secret_new.to_bytes()
+    );
+
+    let mut resp_buff = inout::StaticByteBuffer::new();
+
+    println!(
+        "policy secret buffer {:x?}",
+        buff_policy_secret_new.to_bytes().len()
+    );
+
+    match tpm_device.send_recv(&mut buff_policy_secret_new, &mut resp_buff) {
+        Err(err) => {
+            panic!("error");
+        }
+        _ => (),
+    }
+    println!("size out_private: {:x?}", ir.out_private);
+    println!("size import public: {:x?}", import_command.public);
 
     let mut load = LoadCommand {
         header: CommandHeader {
@@ -335,6 +401,81 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
     }
 
     println!("load response {:02x?}", load_resp.to_bytes());
+
+    let mut lr: LoadResponse;
+
+    let load_response = LoadResponse::new(&mut load_resp);
+    match load_response {
+        Ok(resp) => {
+            lr = resp;
+            println!("load response {:02x?}", load_response);
+        }
+        Err(err) => {
+            panic!("error");
+        }
+    }
+
+    // One one TCP session at a time possible
+    stream.stream.expect("no stream").shutdown(Shutdown::Both);
+
+    // This is unnecessary. Just use emptyAuth
+    let unseal_session = tpm2_startauth_session();
+
+    let mut new_stream = tcp::TpmSwtpmIO::new();
+
+    tpm_device = raw::TpmDevice {
+        rw: &mut new_stream,
+    };
+
+    let mut unseal = UnsealCommand {
+        header: CommandHeader {
+            tag: TPM_ST_SESSIONS,
+            command_size: 0,
+            command_code: tcg::TPM_CC_UNSEAL,
+        },
+        handle: lr.handle,
+        auth: TpmsAuthCommand {
+            session_handle: tcg::TPM_RS_PW,
+            nonce: Tpm2bNonce::new(),
+            session_attributes: TPMA_SESSION_CONTINUE_SESSION,
+            hmac: Tpm2bAuth::new(),
+        },
+    };
+
+    let mut buff_unseal = inout::StaticByteBuffer::new();
+    unseal.pack(&mut buff_unseal);
+
+    unseal.header.command_size = buff_unseal.to_bytes().len() as u32;
+
+    let mut buff_unseal_new = inout::StaticByteBuffer::new();
+    unseal.pack(&mut buff_unseal_new);
+
+    println!(
+        "unseal command structure {:02x?}",
+        buff_unseal_new.to_bytes()
+    );
+
+    let mut unseal_response_buff = inout::StaticByteBuffer::new();
+
+    match tpm_device.send_recv(&mut buff_unseal_new, &mut unseal_response_buff) {
+        Err(err) => {
+            panic!("error");
+        }
+        _ => (),
+    }
+
+    let mut unseal_response: UnsealResponse = UnsealResponse {
+        header: ResponseHeader::new(),
+        data: Tpm2bData {
+            size: 0,
+            buffer: [0; 1024],
+        },
+    };
+    unseal_response.unpack(&mut unseal_response_buff);
+
+    println!("unseal response structure {:02x?}", unseal_response);
+
+    println!("unseal response {:02x?}", unseal_response_buff.to_bytes());
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -377,13 +518,69 @@ impl inout::Tpm2StructIn for LoadResponse {
             _ => (),
         }
 
-        let mut authSize: u16 = 0;
-
-        authSize.unpack(buff);
-
         self.handle.unpack(buff);
+
+        let mut paramSize: u32 = 0;
+        paramSize.unpack(buff);
+
         self.name.unpack(buff);
 
+        Ok(())
+    }
+}
+
+impl LoadResponse {
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+        let mut resp = LoadResponse {
+            header: ResponseHeader::new(),
+            handle: 0,
+            name: Tpm2bDigest::new(),
+        };
+
+        let unpack_result = resp.unpack(buff);
+        match unpack_result {
+            Ok(_) => Ok(resp),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct UnsealCommand {
+    header: CommandHeader,
+    handle: Handle,
+    auth: TpmsAuthCommand,
+}
+
+impl inout::Tpm2StructOut for UnsealCommand {
+    fn pack(&self, buff: &mut dyn inout::RwBytes) {
+        self.header.pack(buff);
+        self.handle.pack(buff);
+
+        let mut auth_buff = inout::StaticByteBuffer::new();
+
+        self.auth.pack(&mut auth_buff);
+
+        let size_auth: u32 = auth_buff.to_bytes().len() as u32;
+        size_auth.pack(buff);
+
+        self.auth.pack(buff);
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct UnsealResponse {
+    header: ResponseHeader,
+    data: Tpm2bData,
+}
+
+impl inout::Tpm2StructIn for UnsealResponse {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
+        match self.header.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+        self.data.unpack(buff);
         Ok(())
     }
 }

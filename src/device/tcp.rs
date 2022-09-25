@@ -4,7 +4,7 @@ use std::net::TcpStream;
 
 // TpmSwtpmIO implements communication with the TPM via socket
 pub struct TpmSwtpmIO {
-    stream: Option<TcpStream>,
+    pub stream: Option<TcpStream>,
 }
 
 impl TpmSwtpmIO {
@@ -41,7 +41,7 @@ impl io::Write for TpmSwtpmIO {
             },
             Some(_) => (),
         }
-
+        println!("about to print");
         match &mut self.stream {
             None => Err(Error::new(ErrorKind::Other, "stream is not configured")),
             Some(s) => match s.write(buf) {

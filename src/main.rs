@@ -40,7 +40,7 @@ fn main() {
 
     println!("auth command is {:?}", auth);
 
-    let handle: Handle = 0x80000001;
+    let handle: Handle = 0x80000000;
     // Create import blob
     //
     tpm2_policy_secret(0x4000000B, auth);

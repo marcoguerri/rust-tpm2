@@ -71,6 +71,7 @@ pub const TPM_SE_TRIAL: TpmSe = 0x03;
 pub const TPM_CC_PCR_READ: TpmCc = 0x0000017E;
 pub const TPM_CC_STARTUP: TpmCc = 0x00000144;
 pub const TPM_CC_IMPORT: TpmCc = 0x00000156;
+pub const TPM_CC_UNSEAL: TpmCc = 0x0000015E;
 pub const TPM_CC_POLICY_SECRET: TpmCc = 0x00000151;
 pub const TPM_START_AUTH_SESSION: TpmCc = 0x00000176;
 pub const TPM_CC_LOAD: TpmCc = 0x00000157;
@@ -1362,6 +1363,18 @@ impl inout::Tpm2StructOut for Tpm2bData {
     fn pack(&self, buff: &mut dyn inout::RwBytes) {
         self.size.pack(buff);
         buff.write_bytes(&self.buffer[0..self.size as usize]);
+    }
+}
+
+impl inout::Tpm2StructIn for Tpm2bData {
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
+        match self.size.unpack(buff) {
+            Err(err) => return Err(err),
+            _ => (),
+        }
+
+        self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
+        Ok(())
     }
 }
 
