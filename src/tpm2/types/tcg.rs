@@ -104,16 +104,30 @@ pub const TPM_ALG_ECC: TpmAlgId = 0x0023;
 pub const TPM_ALG_AES: TpmAlgId = 0x0006;
 pub const TPM_ALG_CFB: TpmAlgId = 0x0043;
 
-// TPMU_HA union
-pub union TpmuHa {
-    pub sha1: [u8; 20usize],
-    pub sha256: [u8; 32usize],
-    pub sha384: [u8; 38usize],
-    pub sha512: [u8; 64usize],
-    pub sm3256: [u8; 32usize],
-}
+// REFACTOR
+// Proposal for a new structure
+//
+//
+//
+//
+// marshalCommand(commandcode, auth[Tpm2StructOut], params[Tpm2StructOut]) u8
+// runCommand
+//
+// Commands do not need to be
 
-pub const MAX_HASH_SIZE: usize = mem::size_of::<TpmuHa>();
+// unmarshal<COMMAND>Response( ) <COMMAND_SPECIFIC_STRUCTURE>
+// in unmarshal response one needs to
+//    unmarshalResponse( params[Tpm2StructIn]) auth, commandcode
+//
+//
+
+// REFACTOR
+//
+//
+//
+
+// MAX_HASH_SIZE represents the size of the longest hash digest supported (sha512)
+pub const MAX_HASH_SIZE: usize = 64;
 
 // TPM2B_DIGEST
 #[derive(Copy, Clone, Debug)]
@@ -130,6 +144,7 @@ impl inout::Tpm2StructOut for Tpm2bDigest {
 }
 
 impl inout::Tpm2StructIn for Tpm2bDigest {
+    // REFACTOR: the error returned here should become an I/O error
     fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
         match self.size.unpack(buff) {
             Err(err) => return Err(err),
