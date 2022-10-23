@@ -1,6 +1,8 @@
 mod crypto;
 mod device;
 mod tpm2;
+use crate::device::raw;
+use crate::device::tcp;
 use crate::tcg::Handle;
 use crate::tpm2::commands::session::tpm2_policy_secret;
 use crate::tpm2::commands::session::tpm2_startauth_session;
@@ -34,9 +36,10 @@ fn main() {
     //    }
     //};
 
-    let auth: tcg::TpmsAuthCommand = tpm2_startauth_session();
+    let mut stream = tcp::TpmSwtpmIO::new();
+    let mut tpm_device: raw::TpmDevice = raw::TpmDevice { rw: &mut stream };
 
-    // Assert poli
+    let auth: tcg::TpmsAuthCommand = tpm2_startauth_session(&mut tpm_device).unwrap();
 
     println!("auth command is {:?}", auth);
 

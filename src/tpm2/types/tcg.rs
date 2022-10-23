@@ -22,7 +22,6 @@ use std::str;
 
 use rand;
 use rand::Rng;
-
 use rsa;
 use rsa::PaddingScheme;
 use rsa::PublicKey;
@@ -344,7 +343,7 @@ pub struct Tpm2bEncryptedSecret {
 }
 
 impl Tpm2bEncryptedSecret {
-    pub fn new_empty() -> Self {
+    pub fn new() -> Self {
         Tpm2bEncryptedSecret {
             size: 0,
             secret: [0; mem::size_of::<TpmuEncryptedSecret>()],

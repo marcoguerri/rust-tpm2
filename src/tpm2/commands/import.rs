@@ -225,7 +225,7 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
         128,
     );
 
-    let mut enc_seed: Tpm2bEncryptedSecret = Tpm2bEncryptedSecret::new_empty();
+    let mut enc_seed: Tpm2bEncryptedSecret = Tpm2bEncryptedSecret::new();
 
     // Create the duplicate (TPM2B_PRIVATE) object based on the sensitive content
     let duplicate = tcg::Tpm2bPrivate::new_duplicate(&public_key, sensitive, public, &mut enc_seed);
@@ -418,14 +418,13 @@ pub fn tpm2_import(parent_handle: Handle, auth: TpmsAuthCommand) {
     // One one TCP session at a time possible
     stream.stream.expect("no stream").shutdown(Shutdown::Both);
 
-    // This is unnecessary. Just use emptyAuth
-    let unseal_session = tpm2_startauth_session();
-
     let mut new_stream = tcp::TpmSwtpmIO::new();
 
     tpm_device = raw::TpmDevice {
         rw: &mut new_stream,
     };
+    // This is unnecessary. Just use emptyAuth
+    let unseal_session = tpm2_startauth_session(&mut tpm_device);
 
     let mut unseal = UnsealCommand {
         header: CommandHeader {
