@@ -103,28 +103,6 @@ pub const TPM_ALG_ECC: TpmAlgId = 0x0023;
 pub const TPM_ALG_AES: TpmAlgId = 0x0006;
 pub const TPM_ALG_CFB: TpmAlgId = 0x0043;
 
-// REFACTOR
-// Proposal for a new structure
-//
-//
-//
-//
-// marshalCommand(commandcode, auth[Tpm2StructOut], params[Tpm2StructOut]) u8
-// runCommand
-//
-// Commands do not need to be
-
-// unmarshal<COMMAND>Response( ) <COMMAND_SPECIFIC_STRUCTURE>
-// in unmarshal response one needs to
-//    unmarshalResponse( params[Tpm2StructIn]) auth, commandcode
-//
-//
-
-// REFACTOR
-//
-//
-//
-
 // MAX_HASH_SIZE represents the size of the longest hash digest supported (sha512)
 pub const MAX_HASH_SIZE: usize = 64;
 
@@ -143,13 +121,11 @@ impl inout::Tpm2StructOut for Tpm2bDigest {
 }
 
 impl inout::Tpm2StructIn for Tpm2bDigest {
-    // REFACTOR: the error returned here should become an I/O error
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.size.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.size.unpack(buff)?
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }
@@ -195,9 +171,12 @@ impl TpmlDigest {
             digests: [Tpm2bDigest::new(); 8],
         }
     }
-    pub fn get_digest(&self, num: u32) -> result::Result<&Tpm2bDigest, errors::TpmError> {
+    pub fn get_digest(
+        &self,
+        num: u32,
+    ) -> result::Result<&Tpm2bDigest, errors::TpmStructFormatError> {
         if num >= self.count {
-            return Err(errors::TpmError {
+            return Err(errors::TpmStructFormatError {
                 msg: String::from(format!(
                     "digest {} is > than available digests {}",
                     num, self.count
@@ -239,16 +218,12 @@ impl inout::Tpm2StructOut for TpmsPcrSelection {
 }
 
 impl inout::Tpm2StructIn for TpmsPcrSelection {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.hash.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-        match self.sizeof_select.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.hash.unpack(buff)?
+        self.sizeof_select.unpack(buff)?
         self.pcr_select
             .clone_from_slice(buff.read_bytes(self.sizeof_select as usize));
         Ok(())
@@ -256,17 +231,11 @@ impl inout::Tpm2StructIn for TpmsPcrSelection {
 }
 
 impl inout::Tpm2StructIn for TpmlDigest {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.count.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+        self.count.unpack(buff)?
         for _pcr_count in 0..self.count {
             let mut size: u16 = 0;
-            match size.unpack(buff) {
-                Err(err) => return Err(err),
-                _ => (),
-            }
+            size.unpack(buff)?
             let buffer = buff.read_bytes(size as usize);
             self.digests[_pcr_count as usize] = Tpm2bDigest::from_vec(size, buffer);
         }
@@ -296,7 +265,6 @@ impl inout::Tpm2StructOut for TpmlPcrSelection {
         let mut count = 0;
         for pcr_selection in self.pcr_selections.iter() {
             if count >= self.count {
-                println!("breaking");
                 break;
             }
             pcr_selection.pack(buff);
@@ -306,21 +274,13 @@ impl inout::Tpm2StructOut for TpmlPcrSelection {
 }
 
 impl inout::Tpm2StructIn for TpmlPcrSelection {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.count.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+        self.count.unpack(buff)?
         for _pcr_count in 0..self.count {
             let mut pcr_selection: TpmsPcrSelection = Default::default();
-            match pcr_selection.unpack(buff) {
-                Err(err) => return Err(err),
-                _ => {
-                    self.pcr_selections[_pcr_count as usize] = pcr_selection;
-                }
-            }
+            pcr_selection.unpack(buff)?
+            self.pcr_selections[_pcr_count as usize] = pcr_selection;
         }
-
         Ok(())
     }
 }
@@ -407,14 +367,8 @@ impl Tpm2bPrivate {
 }
 
 impl inout::Tpm2StructIn for Tpm2bPrivate {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.size.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-
-        println!("Reading {:?}", self.size);
-
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+        self.size.unpack(buff)?
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }
@@ -430,6 +384,7 @@ pub fn get_name(public: TpmtPublic) -> [u8; 34] {
     hasher.update(buff.to_bytes());
 
     let mut name: [u8; 34] = [0; 34];
+    // TODO: this should not be hardcoded
     name[0] = 0x00;
     name[1] = 0x0b;
     name[2..].clone_from_slice(&hasher.finalize()[..]);
@@ -1381,12 +1336,8 @@ impl inout::Tpm2StructOut for Tpm2bData {
 }
 
 impl inout::Tpm2StructIn for Tpm2bData {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.size.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+        self.size.unpack(buff)?
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }

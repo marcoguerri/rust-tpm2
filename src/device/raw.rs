@@ -15,31 +15,29 @@ pub struct TpmRawIO {
 
 // Implementation of ReadWrite trait for TpmRawIO
 impl io::Read for TpmRawIO {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> result::Result<usize, errors::DeviceIoError> {
         match &mut self.device_file {
             None => {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "device file not open for reading",
-                ))
+                return Err(DeviceIoError {
+                    msg: "device file not open for reading",
+                });
             }
-            Some(f) => match f.read(buf) {
-                Err(err) => return Err(err),
-                Ok(n) => Ok(n),
-            },
+            Some(f) => {
+                let n = f.read(buf)?;
+                Ok(n)
+            }
         }
     }
 }
 
 impl io::Write for TpmRawIO {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> result::Result<usize, errors::DeviceIoError> {
         match self.device_file {
             None => match OpenOptions::new().read(true).write(true).open("/dev/tpm0") {
                 Err(err) => {
-                    return Err(Error::new(
-                        err.kind(),
-                        format!("could not open /dev/tpm0: {}", err),
-                    ))
+                    return Err(errors::DeviceIoError {
+                        msg: format!("could not open /dev/tpm0: {}", err),
+                    });
                 }
                 Ok(f) => {
                     self.device_file = Some(f);
@@ -49,25 +47,20 @@ impl io::Write for TpmRawIO {
         }
 
         match &mut self.device_file {
-            None => Err(Error::new(
-                ErrorKind::Other,
-                "device file is not set, cannot write input buffer",
-            )),
-            Some(f) => match f.write_all(buf) {
-                Err(err) => Err(Error::new(
-                    err.kind(),
-                    format!("could not write buffer to TPM device {}", err),
-                )),
-                Ok(_) => Ok(buf.len()),
-            },
+            None => Err(errors::DeviceIoError {
+                msg: "device file is not set, cannot write input buffer",
+            }),
+            Some(f) => {
+                let n = f.write_all(buf)?;
+                Ok(n)
+            }
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "flush is not supported on TpmRawIO",
-        ))
+    fn flush(&mut self) -> result::Result<(), errors::DeviceIoError> {
+        Err(DeviceIoError {
+            msg: "flush is not supported on TpmRawIO",
+        })
     }
 }
 
@@ -83,7 +76,7 @@ pub trait TpmDeviceOps {
         &mut self,
         buff_command: &mut dyn inout::RwBytes,
         buff_answer: &mut dyn inout::RwBytes,
-    ) -> io::Result<()>;
+    ) -> io::Result<(), errors::DeviceIoError>;
 }
 
 impl TpmDeviceOps for TpmDevice<'_> {
@@ -91,27 +84,10 @@ impl TpmDeviceOps for TpmDevice<'_> {
         &mut self,
         buff_command: &mut dyn inout::RwBytes,
         buff_answer: &mut dyn inout::RwBytes,
-    ) -> io::Result<()> {
-        // send output buffer and read answer back
-        match self.rw.write(&buff_command.to_bytes()) {
-            Err(err) => {
-                return Err(Error::new(
-                    err.kind(),
-                    format!("could not write output buffer to TPM: {}", err),
-                ))
-            }
-            Ok(_) => (),
-        }
+    ) -> result::Result<(), errors::DeviceIoError> {
+        self.rw.write(&buff_command.to_bytes())?;
         let mut buff_in = [0; 4096];
-        match self.rw.read(&mut buff_in) {
-            Err(err) => {
-                return Err(Error::new(
-                    err.kind(),
-                    format!("could not read answer from TPM: {}", err),
-                ))
-            }
-            _ => (),
-        };
+        self.rw.read(&mut buff_in)?;
         buff_answer.write_bytes(&buff_in);
         Ok(())
     }

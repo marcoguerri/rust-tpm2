@@ -77,7 +77,10 @@ pub trait Tpm2StructOut {
 // Tpm2StructIn is a trait for TPM objects which can be deserialized from
 // a byte stream
 pub trait Tpm2StructIn {
-    fn unpack(&mut self, buff: &mut dyn RwBytes) -> result::Result<(), errors::TpmError>;
+    fn unpack(
+        &mut self,
+        buff: &mut dyn RwBytes,
+    ) -> result::Result<(), errors::DeserializationError>;
 }
 
 // impl_tpm2_io is a macro which implments Tpm2StructIn and Tpm2StructOut for
@@ -91,14 +94,17 @@ macro_rules! impl_tpm2_io {
         }
 
         impl Tpm2StructIn for $T {
-            fn unpack(&mut self, buff: &mut dyn RwBytes) -> result::Result<(), errors::TpmError> {
+            fn unpack(
+                &mut self,
+                buff: &mut dyn RwBytes,
+            ) -> result::Result<(), errors::DeserializationError> {
                 let byte_array = <[u8; size_of!($T)]>::try_from(&buff.read_bytes(size_of!($T))[..]);
                 match byte_array {
                     Ok(byte_array) => {
                         *self = $T::from_be_bytes(byte_array);
                         Ok(())
                     }
-                    Err(_) => Err(errors::TpmError {
+                    Err(_) => Err(errors::DeserializationError {
                         msg: String::from("could not prepare byteArray"),
                     }),
                 }

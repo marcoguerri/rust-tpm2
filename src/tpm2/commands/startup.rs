@@ -17,10 +17,7 @@ pub struct StartupCommand {
 
 impl StartupCommand {
     // new creates a new StartupCommand object based on tag and startup_type
-    pub fn new(
-        tag: tcg::TpmiStCommandTag,
-        startup_type: tcg::TpmSu,
-    ) -> result::Result<Self, errors::TpmError> {
+    pub fn new(tag: tcg::TpmiStCommandTag, startup_type: tcg::TpmSu) -> Self {
         Ok(StartupCommand {
             header: CommandHeader::new(
                 tag,
@@ -49,26 +46,22 @@ pub struct StartupResponse {
 }
 
 impl inout::Tpm2StructIn for StartupResponse {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.header.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.header.unpack(buff)?
         Ok(())
     }
 }
 
 impl StartupResponse {
     // new builds a StartupResponse structure from a a bytes buffer
-    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::DeserializationError> {
         let mut resp = StartupResponse {
             header: ResponseHeader::new(),
         };
-        let unpack_result = resp.unpack(buff);
-        match unpack_result {
-            Ok(_) => Ok(resp),
-            Err(error) => Err(error),
-        }
+        resp.unpack(buff)?;
     }
 }
 
@@ -77,10 +70,7 @@ pub fn tpm2_startup(startup_type: tcg::TpmSu) -> result::Result<(), errors::TpmE
         rw: &mut tcp::TpmSwtpmIO::new(),
     };
 
-    let cmd_startup = match StartupCommand::new(tcg::TPM_ST_NO_SESSION, startup_type) {
-        Ok(cmd_startup) => cmd_startup,
-        Err(error) => return Err(error),
-    };
+    let cmd_startup = StartupCommand::new(tcg::TPM_ST_NO_SESSION, startup_type);
 
     let mut buffer = inout::StaticByteBuffer::new();
     inout::pack(&[cmd_startup], &mut buffer);

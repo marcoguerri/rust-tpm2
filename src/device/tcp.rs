@@ -14,26 +14,29 @@ impl TpmSwtpmIO {
 }
 
 impl io::Read for TpmSwtpmIO {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> result::Result<usize, errors::DeviceIoError> {
         match &mut self.stream {
-            None => return Err(Error::new(ErrorKind::Other, "stream not open for reading")),
-            Some(s) => match s.read(buf) {
-                Err(err) => return Err(err),
-                Ok(n) => Ok(n),
-            },
+            None => {
+                return Err(errors::DeviceIoError {
+                    msg: "stream not open for reading",
+                })
+            }
+            Some(s) => {
+                let n = s.read(buf)?;
+                Ok(n)
+            }
         }
     }
 }
 
 impl io::Write for TpmSwtpmIO {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> result::Result<usize, errors::DeviceIoError> {
         match self.stream {
             None => match TcpStream::connect("localhost:2322") {
                 Err(err) => {
-                    return Err(Error::new(
-                        err.kind(),
-                        format!("could not open TPM stream connecion: {}", err),
-                    ))
+                    return Err(errors::DeviceIoError {
+                        msg: format!("could not open TPM stream connecion: {}", err),
+                    })
                 }
                 Ok(s) => {
                     self.stream = Some(s);
@@ -41,23 +44,20 @@ impl io::Write for TpmSwtpmIO {
             },
             Some(_) => (),
         }
-        println!("about to print");
+
         match &mut self.stream {
-            None => Err(Error::new(ErrorKind::Other, "stream is not configured")),
-            Some(s) => match s.write(buf) {
-                Err(err) => Err(Error::new(
-                    err.kind(),
-                    format!("could not write buffer to TCP stream {}", err),
-                )),
-                Ok(_) => Ok(buf.len()),
+            None => Err(errors::DeviceIoError {
+                msg: "stream is not configured for writing ",
+            }),
+            Some(s) => {
+                let n = s.write(buf)?
             },
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "flush is not supported on TpmSwtpmIO",
-        ))
+    fn flush(&mut self) -> result::Result<usize, errors::DeviceIoError> {
+        Err(errors::DeviceIoError {
+            msg: "flush is not supported on TpmSwtpmIO",
+        })
     }
 }
