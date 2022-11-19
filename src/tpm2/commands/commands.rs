@@ -46,19 +46,13 @@ impl inout::Tpm2StructOut for CommandHeader {
 }
 
 impl inout::Tpm2StructIn for ResponseHeader {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.tag.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        };
-        match self.response_size.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        };
-        match self.response_code.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.tag.unpack(buff)?;
+        self.response_size.unpack(buff)?;
+        self.response_code.unpack(buff)?;
         Ok(())
     }
 }

@@ -1,6 +1,7 @@
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::TcpStream;
+use crate::device::errors;
 
 // TpmSwtpmIO implements communication with the TPM via socket
 pub struct TpmSwtpmIO {
@@ -18,7 +19,7 @@ impl io::Read for TpmSwtpmIO {
         match &mut self.stream {
             None => {
                 return Err(errors::DeviceIoError {
-                    msg: "stream not open for reading",
+                    msg: "stream not open for reading".to_string(),
                 })
             }
             Some(s) => {
@@ -47,7 +48,7 @@ impl io::Write for TpmSwtpmIO {
 
         match &mut self.stream {
             None => Err(errors::DeviceIoError {
-                msg: "stream is not configured for writing ",
+                msg: "stream is not configured for writing ".to_string(),
             }),
             Some(s) => {
                 let n = s.write(buf)?
@@ -57,7 +58,7 @@ impl io::Write for TpmSwtpmIO {
 
     fn flush(&mut self) -> result::Result<usize, errors::DeviceIoError> {
         Err(errors::DeviceIoError {
-            msg: "flush is not supported on TpmSwtpmIO",
+            msg: "flush is not supported on TpmSwtpmIO".to_string(),
         })
     }
 }

@@ -18,7 +18,7 @@ impl io::Read for TpmRawIO {
     fn read(&mut self, buf: &mut [u8]) -> result::Result<usize, errors::DeviceIoError> {
         match &mut self.device_file {
             None => {
-                return Err(DeviceIoError {
+                return Err(errors::DeviceIoError {
                     msg: "device file not open for reading",
                 });
             }
@@ -58,7 +58,7 @@ impl io::Write for TpmRawIO {
     }
 
     fn flush(&mut self) -> result::Result<(), errors::DeviceIoError> {
-        Err(DeviceIoError {
+        Err(errors::DeviceIoError {
             msg: "flush is not supported on TpmRawIO",
         })
     }
@@ -76,7 +76,7 @@ pub trait TpmDeviceOps {
         &mut self,
         buff_command: &mut dyn inout::RwBytes,
         buff_answer: &mut dyn inout::RwBytes,
-    ) -> io::Result<(), errors::DeviceIoError>;
+    ) -> result::Result<(), errors::DeviceIoError>;
 }
 
 impl TpmDeviceOps for TpmDevice<'_> {

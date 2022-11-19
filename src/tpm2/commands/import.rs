@@ -150,35 +150,26 @@ pub struct ImportResponse {
 }
 
 impl inout::Tpm2StructIn for ImportResponse {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.header.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+        self.header.unpack(buff)?;
 
         let mut paramSize: u32 = 0;
 
         paramSize.unpack(buff);
 
-        match self.out_private.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
+        self.out_private.unpack(buff)?
         Ok(())
     }
 }
 impl ImportResponse {
-    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::DeserializationError> {
         let mut resp = ImportResponse {
             header: ResponseHeader::new(),
             out_private: Tpm2bPrivate::new(),
         };
 
-        let unpack_result = resp.unpack(buff);
-        match unpack_result {
-            Ok(_) => Ok(resp),
-            Err(error) => Err(error),
-        }
+        resp.unpack(buff)?;
+        Ok(resp)
     }
 }
 
@@ -511,36 +502,28 @@ pub struct LoadResponse {
 }
 
 impl inout::Tpm2StructIn for LoadResponse {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.header.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-
-        self.handle.unpack(buff);
+    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+        self.header.unpack(buff)?;
+        self.handle.unpack(buff)?;
 
         let mut paramSize: u32 = 0;
-        paramSize.unpack(buff);
-
-        self.name.unpack(buff);
+        paramSize.unpack(buff)?;
+        self.name.unpack(buff)?;
 
         Ok(())
     }
 }
 
 impl LoadResponse {
-    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::TpmError> {
+    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::DeserializationError> {
         let mut resp = LoadResponse {
             header: ResponseHeader::new(),
             handle: 0,
             name: Tpm2bDigest::new(),
         };
 
-        let unpack_result = resp.unpack(buff);
-        match unpack_result {
-            Ok(_) => Ok(resp),
-            Err(error) => Err(error),
-        }
+        resp.unpack(buff)?;
+        Ok(resp)
     }
 }
 
@@ -574,12 +557,12 @@ pub struct UnsealResponse {
 }
 
 impl inout::Tpm2StructIn for UnsealResponse {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::TpmError> {
-        match self.header.unpack(buff) {
-            Err(err) => return Err(err),
-            _ => (),
-        }
-        self.data.unpack(buff);
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.header.unpack(buff)?
+        self.data.unpack(buff)?
         Ok(())
     }
 }

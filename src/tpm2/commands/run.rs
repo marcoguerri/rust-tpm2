@@ -11,15 +11,18 @@ use crate::tpm2::serialization::inout::Tpm2StructOut;
 use std::mem;
 use std::result;
 
-pub fn runCommand(
+pub fn run_command(
     tpm: &mut device::raw::TpmDeviceOps,
     command_code: tcg::TpmCc,
     handles: &[tcg::Handle],
     auths: &[tcg::TpmsAuthCommand],
     params: &[&inout::Tpm2StructOut],
     response: &mut dyn inout::RwBytes,
-) -> result::Result<(), errors::RunCommandError> {
-    // Assemble the body of the command, including handle area, auth area, param area
+) -> result::Result<(), errors::CommandError> {
+    //
+    // Assemble the body of the command, including handle area,
+    // auth area, params area
+    //
     let mut body_buff = inout::StaticByteBuffer::new();
     for handle in handles.iter() {
         handle.pack(&mut body_buff);
@@ -31,7 +34,9 @@ pub fn runCommand(
         param.pack(&mut body_buff);
     }
 
+    //
     // Assemble the header, including tag, command code and command size
+    //
     let mut header_buff = inout::StaticByteBuffer::new();
     if auths.len() > 0 {
         tcg::TPM_ST_SESSIONS.pack(&mut header_buff);
@@ -45,7 +50,9 @@ pub fn runCommand(
     command_size.pack(&mut header_buff);
     command_code.pack(&mut header_buff);
 
+    //
     // Assemble the final command, packing header and body together
+    //
     let mut command_buff = inout::StaticByteBuffer::new();
     command_buff.write_bytes(header_buff.to_bytes());
     command_buff.write_bytes(body_buff.to_bytes());
@@ -57,7 +64,7 @@ pub fn runCommand(
 
     match tpm.send_recv(&mut command_buff, &mut resp_buff) {
         Err(err) => {
-            return Err(errors::RunCommandError::TpmIoError(errors::TpmIoError {
+            return Err(errors::CommandError::IoError(errors::IoError {
                 msg: err.to_string(),
             }))
         }
@@ -68,11 +75,9 @@ pub fn runCommand(
             response_size.unpack(&mut resp_buff)?;
             response_code.unpack(&mut resp_buff)?;
             if response_code != 0 {
-                return Err(errors::RunCommandError::TpmCommandError(
-                    errors::TpmCommandError {
-                        error_code: response_code,
-                    },
-                ));
+                return Err(errors::CommandError::ResponseError(errors::ResponseError {
+                    error_code: response_code,
+                }));
             }
             response
                 .write_bytes(resp_buff.read_bytes(response_size as usize - header_size as usize));
