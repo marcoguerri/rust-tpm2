@@ -3,6 +3,7 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::{Error, ErrorKind};
+use std::result;
 
 // Define a combined ReadWrite trait.
 pub trait ReadWrite: io::Read + io::Write {}
@@ -15,12 +16,13 @@ pub struct TpmRawIO {
 
 // Implementation of ReadWrite trait for TpmRawIO
 impl io::Read for TpmRawIO {
-    fn read(&mut self, buf: &mut [u8]) -> result::Result<usize, errors::DeviceIoError> {
+    fn read(&mut self, buf: &mut [u8]) -> result::Result<usize, std::io::Error> {
         match &mut self.device_file {
             None => {
-                return Err(errors::DeviceIoError {
-                    msg: "device file not open for reading",
-                });
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "device file not open for reading".to_string(),
+                ))
             }
             Some(f) => {
                 let n = f.read(buf)?;
@@ -31,13 +33,14 @@ impl io::Read for TpmRawIO {
 }
 
 impl io::Write for TpmRawIO {
-    fn write(&mut self, buf: &[u8]) -> result::Result<usize, errors::DeviceIoError> {
+    fn write(&mut self, buf: &[u8]) -> result::Result<usize, std::io::Error> {
         match self.device_file {
             None => match OpenOptions::new().read(true).write(true).open("/dev/tpm0") {
                 Err(err) => {
-                    return Err(errors::DeviceIoError {
-                        msg: format!("could not open /dev/tpm0: {}", err),
-                    });
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!("could not open /dev/tpm0: {}", err),
+                    ));
                 }
                 Ok(f) => {
                     self.device_file = Some(f);
@@ -47,20 +50,22 @@ impl io::Write for TpmRawIO {
         }
 
         match &mut self.device_file {
-            None => Err(errors::DeviceIoError {
-                msg: "device file is not set, cannot write input buffer",
-            }),
+            None => Err(Error::new(
+                ErrorKind::Other,
+                "device file is not set, cannot write input buffer".to_string(),
+            )),
             Some(f) => {
-                let n = f.write_all(buf)?;
-                Ok(n)
+                f.write_all(buf)?;
+                Ok(buf.len() as usize)
             }
         }
     }
 
-    fn flush(&mut self) -> result::Result<(), errors::DeviceIoError> {
-        Err(errors::DeviceIoError {
-            msg: "flush is not supported on TpmRawIO",
-        })
+    fn flush(&mut self) -> result::Result<(), std::io::Error> {
+        Err(Error::new(
+            ErrorKind::Other,
+            "flush is not supported on TpmRawIO".to_string(),
+        ))
     }
 }
 
@@ -76,7 +81,7 @@ pub trait TpmDeviceOps {
         &mut self,
         buff_command: &mut dyn inout::RwBytes,
         buff_answer: &mut dyn inout::RwBytes,
-    ) -> result::Result<(), errors::DeviceIoError>;
+    ) -> result::Result<(), std::io::Error>;
 }
 
 impl TpmDeviceOps for TpmDevice<'_> {
@@ -84,7 +89,7 @@ impl TpmDeviceOps for TpmDevice<'_> {
         &mut self,
         buff_command: &mut dyn inout::RwBytes,
         buff_answer: &mut dyn inout::RwBytes,
-    ) -> result::Result<(), errors::DeviceIoError> {
+    ) -> result::Result<(), std::io::Error> {
         self.rw.write(&buff_command.to_bytes())?;
         let mut buff_in = [0; 4096];
         self.rw.read(&mut buff_in)?;

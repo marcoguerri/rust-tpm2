@@ -6,7 +6,6 @@ use crate::device::tcp;
 use crate::tcg::Handle;
 use crate::tpm2::commands::session;
 use tpm2::commands::import;
-use tpm2::commands::pcrread;
 use tpm2::commands::pcrs::PCRSelection;
 use tpm2::commands::pcrs::MAX_PCR;
 use tpm2::commands::startup;
@@ -44,5 +43,5 @@ fn main() {
     // Create import blob
     //
     session::tpm2_policy_secret(&mut tpm, 0x4000000B, auth);
-    import::tpm2_import(handle, auth);
+    import::tpm2_import(&mut tpm, handle, auth);
 }

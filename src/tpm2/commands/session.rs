@@ -1,20 +1,10 @@
 use crate::device;
-use crate::device::raw;
-use crate::device::raw::TpmDeviceOps;
-use crate::device::tcp;
-use crate::tcg;
-use crate::tpm2::commands::commands::CommandHeader;
-use crate::tpm2::commands::commands::ResponseHeader;
 use crate::tpm2::commands::run;
-use crate::tpm2::commands::run::runCommand;
 use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
-use crate::tpm2::serialization::inout::RwBytes;
-use crate::tpm2::serialization::inout::StaticByteBuffer;
 use crate::tpm2::serialization::inout::Tpm2StructIn;
 use crate::tpm2::serialization::inout::Tpm2StructOut;
 use crate::tpm2::types::tcg;
-use std::mem;
 use std::result;
 
 // Initiates Auth session and returns TPMS_AUTH_COMMAND structure
@@ -73,8 +63,8 @@ pub fn tpm2_startauth_session(
         &mut resp_buff,
     )?;
 
-    let session_handle: tcg::TpmiShAuthSession = 0;
-    let nonce: tcg::Tpm2bNonce = tcg::Tpm2bNonce::new();
+    let mut session_handle: tcg::TpmiShAuthSession = 0;
+    let mut nonce: tcg::Tpm2bNonce = tcg::Tpm2bNonce::new();
 
     session_handle.unpack(&mut resp_buff)?;
     nonce.unpack(&mut resp_buff)?;

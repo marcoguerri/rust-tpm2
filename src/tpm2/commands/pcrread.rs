@@ -4,6 +4,7 @@ use crate::tpm2::commands::commands::ResponseHeader;
 use crate::tpm2::commands::pcrs::PCRSelection;
 use crate::tpm2::commands::pcrs::PlatformConfigurationRegisters;
 use crate::tpm2::commands::pcrs::MAX_PCR;
+use crate::tpm2::commands::run;
 use crate::tpm2::errors;
 use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::RwBytes;
@@ -72,7 +73,10 @@ pub struct PcrReadResponse {
 }
 
 impl inout::Tpm2StructIn for PcrReadResponse {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
         self.header.unpack(buff)?;
         self.pcr_update_counter.unpack(buff)?;
         self.pcr_selection_in.unpack(buff)?;
@@ -83,20 +87,24 @@ impl inout::Tpm2StructIn for PcrReadResponse {
 
 impl PcrReadResponse {
     // new builds a PcrReadResponse structure from a a bytes buffer
-    pub fn new(buff: &mut dyn inout::RwBytes) -> result::Result<Self, errors::DeserializationError> {
+    pub fn new(
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<Self, errors::DeserializationError> {
         let mut resp = PcrReadResponse {
             header: ResponseHeader::new(),
             pcr_update_counter: 0,
             pcr_selection_in: tcg::TpmlPcrSelection::new(),
             pcr_values: tcg::TpmlDigest::new(),
         };
-        resp.unpack(buff)?
+        resp.unpack(buff)?;
         Ok(resp)
     }
 
     // to_pcr_values turns TpmlPcrSelection and TpmlDigest structures into
     // a PCRValues
-    pub fn to_pcr_values(&self) -> result::Result<PlatformConfigurationRegisters, errors::TpmError> {
+    pub fn to_pcr_values(
+        &self,
+    ) -> result::Result<PlatformConfigurationRegisters, errors::TpmStructFormatError> {
         let mut pcrs: PlatformConfigurationRegisters = PlatformConfigurationRegisters::new();
 
         for tpms_selection in &self.pcr_selection_in.pcr_selections {
@@ -107,20 +115,12 @@ impl PcrReadResponse {
                 // TpmlDigest, which can carry at most 8 Tpm2bDigest structures
                 for n in 0..self.pcr_values.num_digests() {
                     if pcr_bitmap >> n & 0x1 == 0x1 {
-                        match self.pcr_values.get_digest(n) {
-                            Ok(digest) => {
-                                pcrs.add(
-                                    tpms_selection.hash,          // algorithm
-                                    n + 8 * index as u32,         // pcr register number
-                                    digest.get_buffer().to_vec(), // digest
-                                );
-                            }
-                            Err(err) => {
-                                return Err(errors::TpmError {
-                                    msg: format!("cannot get digest number {}", err.to_string()),
-                                });
-                            }
-                        }
+                        let digest = self.pcr_values.get_digest(n)?;
+                        pcrs.add(
+                            tpms_selection.hash,          // algorithm
+                            n + 8 * index as u32,         // pcr register number
+                            digest.get_buffer().to_vec(), // digest
+                        );
                     }
                 }
             }
@@ -130,8 +130,10 @@ impl PcrReadResponse {
     }
 }
 
-pub fn tpm2_pcr_read(tpm: &mut device::raw::TpmDeviceOps, selection: &[PCRSelection]) -> result::Result<PlatformConfigurationRegisters, errors::CommandError> {
-    
+pub fn tpm2_pcr_read(
+    tpm: &mut device::raw::TpmDeviceOps,
+    selection: &[PCRSelection],
+) -> result::Result<PlatformConfigurationRegisters, errors::CommandError> {
     let mut all_pcrs: PlatformConfigurationRegisters = PlatformConfigurationRegisters::new();
 
     for pcr_selection in selection {
@@ -140,13 +142,14 @@ pub fn tpm2_pcr_read(tpm: &mut device::raw::TpmDeviceOps, selection: &[PCRSelect
 
         for (index, pcr) in pcr_selection.get_pcrs().iter().enumerate() {
             if *pcr > (MAX_PCR as u8) {
-                return Err(errors::CommandError::InputParameterError( 
-                errors::InputParameterError {
-                    msg: format!(
-                        "pcr register requested {} is beyond the maximum supported pcr {}",
-                        pcr, MAX_PCR
-                    ),
-                }));
+                return Err(errors::CommandError::InputParameterError(
+                    errors::InputParameterError {
+                        msg: format!(
+                            "pcr register requested {} is beyond the maximum supported pcr {}",
+                            pcr, MAX_PCR
+                        ),
+                    },
+                ));
             }
 
             let pcr_map_index: usize = (pcr / 8) as usize;
@@ -167,24 +170,24 @@ pub fn tpm2_pcr_read(tpm: &mut device::raw::TpmDeviceOps, selection: &[PCRSelect
                     count: 1,
                     pcr_selections: pcr_selections,
                 };
-                
-                let mut resp_buffer = inout::StaticByteBuffer::new();
-                let = params: [&inout::Tpm2StructOut, 1] = [
-                    pcr_selection,
-                ]
 
-                let ret = run_command(
+                let mut resp_buffer = inout::StaticByteBuffer::new();
+                let params: [&inout::Tpm2StructOut; 1] = [&pcr_selection];
+                let auth: [tcg::TpmsAuthCommand; 0] = [];
+                let handle: [tcg::Handle; 0] = [];
+
+                let ret = run::run_command(
                     tpm,
                     tcg::TPM_START_AUTH_SESSION,
-                    &[tcg::Handle; 0],
-                    &[tcg::TpmsAuthCommand; 0],
+                    &handle,
+                    &auth,
                     &params,
-                    &mut resp_buff,
+                    &mut resp_buffer,
                 )?;
 
-                let resp = PcrReadResponse::new(&mut resp_buffer);
+                let resp = PcrReadResponse::new(&mut resp_buffer)?;
 
-                pcrs = pcr_read_response.to_pcr_values()?;
+                let pcrs = resp.to_pcr_values()?;
                 all_pcrs.merge(pcrs.get_map());
 
                 pcr_map = [0x00, 0x00, 0x00];

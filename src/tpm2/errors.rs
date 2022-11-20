@@ -92,6 +92,7 @@ pub enum CommandError {
     ResponseError(ResponseError),
     DeserializationError(DeserializationError),
     InputParameterError(InputParameterError),
+    TpmStructFormatError(TpmStructFormatError),
 }
 
 impl Error for CommandError {}
@@ -104,6 +105,12 @@ impl fmt::Display for CommandError {
 impl From<DeserializationError> for CommandError {
     fn from(err: DeserializationError) -> Self {
         CommandError::DeserializationError(err)
+    }
+}
+
+impl From<TpmStructFormatError> for CommandError {
+    fn from(err: TpmStructFormatError) -> Self {
+        CommandError::TpmStructFormatError(err)
     }
 }
 

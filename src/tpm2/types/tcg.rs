@@ -16,12 +16,10 @@ use sha2::{Digest, Sha256};
 use hmac::{Hmac, Mac};
 
 use num_traits::ToPrimitive;
-use rand::rngs::OsRng;
 use std::fmt;
 use std::str;
 
 use rand;
-use rand::Rng;
 use rsa;
 use rsa::PaddingScheme;
 use rsa::PublicKey;
@@ -125,7 +123,7 @@ impl inout::Tpm2StructIn for Tpm2bDigest {
         &mut self,
         buff: &mut dyn inout::RwBytes,
     ) -> result::Result<(), errors::DeserializationError> {
-        self.size.unpack(buff)?
+        self.size.unpack(buff)?;
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }
@@ -222,8 +220,8 @@ impl inout::Tpm2StructIn for TpmsPcrSelection {
         &mut self,
         buff: &mut dyn inout::RwBytes,
     ) -> result::Result<(), errors::DeserializationError> {
-        self.hash.unpack(buff)?
-        self.sizeof_select.unpack(buff)?
+        self.hash.unpack(buff)?;
+        self.sizeof_select.unpack(buff)?;
         self.pcr_select
             .clone_from_slice(buff.read_bytes(self.sizeof_select as usize));
         Ok(())
@@ -231,11 +229,14 @@ impl inout::Tpm2StructIn for TpmsPcrSelection {
 }
 
 impl inout::Tpm2StructIn for TpmlDigest {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
-        self.count.unpack(buff)?
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.count.unpack(buff)?;
         for _pcr_count in 0..self.count {
             let mut size: u16 = 0;
-            size.unpack(buff)?
+            size.unpack(buff)?;
             let buffer = buff.read_bytes(size as usize);
             self.digests[_pcr_count as usize] = Tpm2bDigest::from_vec(size, buffer);
         }
@@ -274,11 +275,14 @@ impl inout::Tpm2StructOut for TpmlPcrSelection {
 }
 
 impl inout::Tpm2StructIn for TpmlPcrSelection {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
-        self.count.unpack(buff)?
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.count.unpack(buff)?;
         for _pcr_count in 0..self.count {
             let mut pcr_selection: TpmsPcrSelection = Default::default();
-            pcr_selection.unpack(buff)?
+            pcr_selection.unpack(buff)?;
             self.pcr_selections[_pcr_count as usize] = pcr_selection;
         }
         Ok(())
@@ -367,8 +371,11 @@ impl Tpm2bPrivate {
 }
 
 impl inout::Tpm2StructIn for Tpm2bPrivate {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
-        self.size.unpack(buff)?
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.size.unpack(buff)?;
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }
@@ -1336,8 +1343,11 @@ impl inout::Tpm2StructOut for Tpm2bData {
 }
 
 impl inout::Tpm2StructIn for Tpm2bData {
-    fn unpack(&mut self, buff: &mut dyn inout::RwBytes) -> result::Result<(), errors::DeserializationError> {
-        self.size.unpack(buff)?
+    fn unpack(
+        &mut self,
+        buff: &mut dyn inout::RwBytes,
+    ) -> result::Result<(), errors::DeserializationError> {
+        self.size.unpack(buff)?;
         self.buffer[0..self.size as usize].clone_from_slice(buff.read_bytes(self.size as usize));
         Ok(())
     }

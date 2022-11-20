@@ -49,16 +49,16 @@ impl std::fmt::Display for PCRValues {
     }
 }
 
-// PlatformControlRegisters represents a set of multi-algorithm PCR values
+// PlatformConfigurationRegisters represents a set of multi-algorithm PCR values
 #[derive(Debug)]
-pub struct PlatformControlRegisters {
+pub struct PlatformConfigurationRegisters {
     pcrs: HashMap<tcg::TpmAlgId, PCRValues>,
 }
 
-// PlatformControlRegisters represents a set of multi-algorithm PCR values
-impl PlatformControlRegisters {
+// PlatformConfigurationRegisters represents a set of multi-algorithm PCR values
+impl PlatformConfigurationRegisters {
     pub fn new() -> Self {
-        PlatformControlRegisters {
+        PlatformConfigurationRegisters {
             pcrs: HashMap::new(),
         }
     }
@@ -97,7 +97,7 @@ impl PlatformControlRegisters {
     }
 }
 
-impl std::fmt::Display for PlatformControlRegisters {
+impl std::fmt::Display for PlatformConfigurationRegisters {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for (key, value) in &self.pcrs {
             let _ = write!(f, "Algo: {}\n", key);

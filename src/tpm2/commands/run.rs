@@ -1,7 +1,6 @@
 use crate::device;
 use crate::tcg;
 use crate::tpm2::errors;
-use crate::tpm2::serialization;
 use crate::tpm2::serialization::inout;
 
 use crate::tpm2::serialization::inout::RwBytes;
