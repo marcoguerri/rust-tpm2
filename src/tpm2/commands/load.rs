@@ -7,44 +7,6 @@ use crate::tpm2::serialization::inout;
 use crate::tpm2::serialization::inout::Tpm2StructIn;
 use std::result;
 
-#[derive(Copy, Clone, Debug)]
-pub struct LoadResponse {
-    header: commands::ResponseHeader,
-    handle: tcg::Handle,
-    name: tcg::Tpm2bDigest,
-}
-
-impl inout::Tpm2StructIn for LoadResponse {
-    fn unpack(
-        &mut self,
-        buff: &mut dyn inout::RwBytes,
-    ) -> result::Result<(), errors::DeserializationError> {
-        self.header.unpack(buff)?;
-        self.handle.unpack(buff)?;
-
-        let mut paramSize: u32 = 0;
-        paramSize.unpack(buff)?;
-        self.name.unpack(buff)?;
-
-        Ok(())
-    }
-}
-
-impl LoadResponse {
-    pub fn new(
-        buff: &mut dyn inout::RwBytes,
-    ) -> result::Result<Self, errors::DeserializationError> {
-        let mut resp = LoadResponse {
-            header: commands::ResponseHeader::new(),
-            handle: 0,
-            name: tcg::Tpm2bDigest::new(),
-        };
-
-        resp.unpack(buff)?;
-        Ok(resp)
-    }
-}
-
 pub fn tpm2_load(
     tpm: &mut dyn device::raw::TpmDeviceOps,
     parent: tcg::Handle,
@@ -74,6 +36,10 @@ pub fn tpm2_load(
         &mut resp_buff,
     )?;
 
-    let resp = LoadResponse::new(&mut resp_buff)?;
-    Ok(resp.handle)
+    let mut resp_handle: tcg::Handle = 0;
+    let mut name: tcg::Tpm2bDigest = tcg::Tpm2bDigest::new();
+    resp_handle.unpack(&mut resp_buff)?;
+    name.unpack(&mut resp_buff)?;
+
+    Ok(resp_handle)
 }

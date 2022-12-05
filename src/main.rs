@@ -1,13 +1,13 @@
 mod crypto;
 mod device;
 mod tpm2;
-use crate::device::raw;
-use crate::device::tcp;
-use crate::tcg::Handle;
-use crate::tpm2::commands::session;
+use device::raw;
+use device::tcp;
+use tcg::Handle;
 use tpm2::commands::import;
 use tpm2::commands::pcrs::PCRSelection;
 use tpm2::commands::pcrs::MAX_PCR;
+use tpm2::commands::session;
 use tpm2::commands::startup;
 use tpm2::types::tcg;
 
@@ -34,14 +34,15 @@ fn main() {
     let mut stream = tcp::TpmSwtpmIO::new();
     let mut tpm: raw::TpmDevice = raw::TpmDevice { rw: &mut stream };
 
+    println!("startup");
     startup::tpm2_startup(&mut tpm, tcg::TPM_SU_CLEAR);
+    println!("auth session");
     let auth: tcg::TpmsAuthCommand = session::tpm2_startauth_session(&mut tpm).unwrap();
-
-    println!("auth command is {:?}", auth);
 
     let handle: Handle = 0x80000000;
     // Create import blob
-    //
+    println!("policy secret");
     session::tpm2_policy_secret(&mut tpm, 0x4000000B, auth);
-    import::tpm2_import(&mut tpm, handle, auth);
+    println!("import");
+    let data: tcg::Tpm2bData = import::tpm2_import(&mut tpm, handle, auth).unwrap();
 }

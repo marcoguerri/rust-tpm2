@@ -50,13 +50,11 @@ pub fn tpm2_unseal(
         &mut resp_buff,
     )?;
 
-    let mut unseal_response: UnsealResponse = UnsealResponse {
-        header: commands::ResponseHeader::new(),
-        data: tcg::Tpm2bData {
-            size: 0,
-            buffer: [0; 1024],
-        },
+    let mut data: tcg::Tpm2bData = tcg::Tpm2bData {
+        size: 0,
+        buffer: [0; 1024],
     };
-    unseal_response.unpack(&mut resp_buff)?;
-    return Ok(unseal_response.data);
+
+    data.unpack(&mut resp_buff)?;
+    return Ok(data);
 }

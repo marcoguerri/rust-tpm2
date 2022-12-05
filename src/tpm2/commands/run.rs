@@ -27,10 +27,16 @@ pub fn run_command(
         handle.pack(&mut body_buff);
     }
     for auth in auths.iter() {
-        auth.pack(&mut body_buff);
+        let mut auth_buff = inout::StaticByteBuffer::new();
+        auth.pack(&mut auth_buff);
+        let size_auth: u32 = auth_buff.to_bytes().len() as u32;
+        size_auth.pack(&mut body_buff);
+        body_buff.write_bytes(auth_buff.to_bytes());
     }
     for param in params.iter() {
+        let mut param_buff = inout::StaticByteBuffer::new();
         param.pack(&mut body_buff);
+        param.pack(&mut param_buff);
     }
 
     //
@@ -55,8 +61,6 @@ pub fn run_command(
     let mut command_buff = inout::StaticByteBuffer::new();
     command_buff.write_bytes(header_buff.to_bytes());
     command_buff.write_bytes(body_buff.to_bytes());
-
-    println!("{:02x?}", command_buff.to_bytes());
 
     let mut resp_buff = inout::StaticByteBuffer::new();
     let mut response_code: u32 = 0;

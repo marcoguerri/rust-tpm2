@@ -18,46 +18,14 @@ use std::result;
 
 const SAMPLE: &'static str = "
 -----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArHW0IdnSJFdPzCdfdYSG
-XEfZmvj2FjNgcrwlR9dT3yu8YPpo6dHu6clYucsRsfAUoFeFxHEaBEJKECcqua8R
-ZxOAb9zn9f2NvX/KNpEJCmrrgNZxd4A6B1nV3YIY5MQlV7CAWsXT4jsnRdzTJJkw
-ZkwYv2jWJagEeb0Ba9P+YfSvBlHWYNqMAR0cMLccd0grScw31Z4EWCfnMoceJR5X
-gFp4xbXxCvO9JnRRHK9mJMK9SZtcUHZ3utaNoDoTspcf8SF7TOBYhwJttuCVoHhj
-sGKcOHvV2pXdaBTpAGb8djNWpvGBlYWps7OY6So7NZoY0aHqTGD/ROEutO/sxltA
-qQIDAQAB
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt75GjDKVXgtzPtVIxiiR
+4bTGY9DKCwjIptkdWr6M1BqqfK3TVcA7BKK1nIZ/pYwRV/fJjshVbJbkBWJ8OHm2
+LnF/nIOYvhN5fT28DBZbu9BIMKJ7+FoI/FnnXgLh3Z17EBhssP5Xytg6alxHrH6z
+0+VyB4z/lqE2XHHbqFb44JWG0IixbAn7Za9P2GgIpB004y1nsXG08rlz0cMU0nE2
+3+AWM0TsHtFE1Byg3x/gpkeV4lnEq1luBiCInXnK6TfYSno8gXKSX5Y2+bJ5NBaU
+vy6TEEf6dU5SDjSDBGagtlX8juQpdcuN/L+0MkZ1Gqj6hdYBGl4eFlc5DKokncPv
+0QIDAQAB
 -----END PUBLIC KEY-----";
-
-#[derive(Copy, Clone, Debug)]
-pub struct ImportResponse {
-    header: commands::ResponseHeader,
-    out_private: tcg::Tpm2bPrivate,
-}
-
-impl inout::Tpm2StructIn for ImportResponse {
-    fn unpack(
-        &mut self,
-        buff: &mut dyn inout::RwBytes,
-    ) -> result::Result<(), errors::DeserializationError> {
-        self.header.unpack(buff)?;
-        let mut paramSize: u32 = 0;
-        paramSize.unpack(buff);
-        self.out_private.unpack(buff)?;
-        Ok(())
-    }
-}
-impl ImportResponse {
-    pub fn new(
-        buff: &mut dyn inout::RwBytes,
-    ) -> result::Result<Self, errors::DeserializationError> {
-        let mut resp = ImportResponse {
-            header: commands::ResponseHeader::new(),
-            out_private: tcg::Tpm2bPrivate::new(),
-        };
-
-        resp.unpack(buff)?;
-        Ok(resp)
-    }
-}
 
 pub fn tpm2_import(
     tpm: &mut dyn device::raw::TpmDeviceOps,
@@ -142,7 +110,11 @@ pub fn tpm2_import(
         &mut resp_buff,
     )?;
 
-    let resp = ImportResponse::new(&mut resp_buff)?;
+    let mut param_size: u32 = 0;
+    param_size.unpack(&mut resp_buff)?;
+
+    let mut out_private: tcg::Tpm2bPrivate = tcg::Tpm2bPrivate::new();
+    out_private.unpack(&mut resp_buff);
 
     session::tpm2_policy_secret(tpm, 0x4000000B, auth)?;
 
@@ -150,7 +122,7 @@ pub fn tpm2_import(
         tpm,
         parent_handle,
         auth,
-        resp.out_private,
+        out_private,
         tcg::Tpm2bPublic {
             size: buff_public.to_bytes().len() as u16,
             public: public,
